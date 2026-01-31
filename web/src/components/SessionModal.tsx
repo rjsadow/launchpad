@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useSession } from '../hooks/useSession';
 import { VNCViewer } from './VNCViewer';
 import type { Application } from '../types';
@@ -14,77 +14,87 @@ type ConnectionState = 'idle' | 'creating' | 'waiting' | 'connecting' | 'connect
 
 export function SessionModal({ app, isOpen, onClose, darkMode }: SessionModalProps) {
   const { session, isLoading, error, createSession, terminateSession } = useSession();
-  const [connectionState, setConnectionState] = useState<ConnectionState>('idle');
-  const [statusMessage, setStatusMessage] = useState('');
+  const [vncConnectionState, setVncConnectionState] = useState<'idle' | 'connected' | 'error'>('idle');
+  const [vncErrorMessage, setVncErrorMessage] = useState('');
+  const [sessionCreationStarted, setSessionCreationStarted] = useState(false);
 
   // Create session when modal opens
   useEffect(() => {
-    if (isOpen && !session && connectionState === 'idle') {
-      setConnectionState('creating');
-      setStatusMessage('Creating session...');
-      createSession(app.id).then((newSession) => {
-        if (newSession) {
-          setConnectionState('waiting');
-          setStatusMessage('Waiting for container to start...');
-        } else {
-          setConnectionState('error');
-        }
-      });
+    if (isOpen && !session && !sessionCreationStarted) {
+      setSessionCreationStarted(true);
+      createSession(app.id);
     }
-  }, [isOpen, session, connectionState, app.id, createSession]);
+  }, [isOpen, session, sessionCreationStarted, app.id, createSession]);
 
-  // Update state based on session status
+  // Reset state when modal closes
   useEffect(() => {
-    if (!session) return;
+    if (!isOpen) {
+      setSessionCreationStarted(false);
+      setVncConnectionState('idle');
+      setVncErrorMessage('');
+    }
+  }, [isOpen]);
 
+  // Derive connection state and status message from session
+  const { connectionState, statusMessage } = useMemo((): { connectionState: ConnectionState; statusMessage: string } => {
+    // VNC-level errors take precedence
+    if (vncConnectionState === 'error') {
+      return { connectionState: 'error', statusMessage: vncErrorMessage || 'Connection error' };
+    }
+    if (vncConnectionState === 'connected') {
+      return { connectionState: 'connected', statusMessage: '' };
+    }
+
+    // No session yet - we're creating
+    if (!session) {
+      if (sessionCreationStarted || isLoading) {
+        return { connectionState: 'creating', statusMessage: 'Creating session...' };
+      }
+      return { connectionState: 'idle', statusMessage: '' };
+    }
+
+    // Derive from session status
     switch (session.status) {
       case 'pending':
       case 'creating':
-        setConnectionState('waiting');
-        setStatusMessage('Starting container...');
-        break;
+        return { connectionState: 'waiting', statusMessage: 'Starting container...' };
       case 'running':
         if (session.websocket_url) {
-          setConnectionState('connecting');
-          setStatusMessage('Connecting to display...');
+          return { connectionState: 'connecting', statusMessage: 'Connecting to display...' };
         }
-        break;
+        return { connectionState: 'waiting', statusMessage: 'Waiting for container...' };
       case 'failed':
-        setConnectionState('error');
-        setStatusMessage('Session failed to start');
-        break;
+        return { connectionState: 'error', statusMessage: error || 'Session failed to start' };
       case 'terminated':
-        setConnectionState('idle');
-        break;
+        return { connectionState: 'idle', statusMessage: '' };
+      default:
+        return { connectionState: 'idle', statusMessage: '' };
     }
-  }, [session]);
+  }, [session, sessionCreationStarted, vncConnectionState, vncErrorMessage, isLoading, error]);
 
   // Handle close
   const handleClose = useCallback(async () => {
     if (session && session.status !== 'terminated' && session.status !== 'failed') {
       await terminateSession();
     }
-    setConnectionState('idle');
-    setStatusMessage('');
     onClose();
   }, [session, terminateSession, onClose]);
 
   // Handle VNC connection events
   const handleVNCConnect = useCallback(() => {
-    setConnectionState('connected');
-    setStatusMessage('');
+    setVncConnectionState('connected');
   }, []);
 
   const handleVNCDisconnect = useCallback((clean: boolean) => {
-    if (!clean && connectionState === 'connected') {
-      setConnectionState('error');
-      setStatusMessage('Connection lost');
+    if (!clean && vncConnectionState === 'connected') {
+      setVncConnectionState('error');
+      setVncErrorMessage('Connection lost');
     }
-  }, [connectionState]);
+  }, [vncConnectionState]);
 
   const handleVNCError = useCallback((message: string) => {
-    setConnectionState('error');
-    setStatusMessage(message);
+    setVncConnectionState('error');
+    setVncErrorMessage(message);
   }, []);
 
   if (!isOpen) return null;
