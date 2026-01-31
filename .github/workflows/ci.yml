@@ -118,9 +118,7 @@ jobs:
         run: make build
 
       - name: Verify binary exists
-        run: |
-          test -f launchpad || (echo "Binary not found" && exit 1)
-          ./launchpad -h || true
+        run: test -f launchpad || (echo "Binary not found" && exit 1)
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
