@@ -26,6 +26,9 @@ type Config struct {
 	SecondaryColor     string
 	TenantName         string
 
+	// Runner configuration
+	RunnerType string // kubernetes, docker, nomad (default: kubernetes)
+
 	// Kubernetes configuration
 	Namespace       string
 	Kubeconfig      string
@@ -69,6 +72,7 @@ const (
 	DefaultPrimaryColor           = "#398D9B"
 	DefaultSecondaryColor         = "#4AB7C3"
 	DefaultTenantName             = "Launchpad"
+	DefaultRunnerType             = "kubernetes"
 	DefaultNamespace              = "default"
 	DefaultVNCSidecarImage        = "ghcr.io/rjsadow/launchpad-vnc-sidecar:latest"
 	DefaultSessionTimeout         = 2 * time.Hour
@@ -90,6 +94,9 @@ func Load() (*Config, error) {
 		PrimaryColor:       DefaultPrimaryColor,
 		SecondaryColor:     DefaultSecondaryColor,
 		TenantName:         DefaultTenantName,
+
+		// Runner defaults
+		RunnerType: DefaultRunnerType,
 
 		// Kubernetes defaults
 		Namespace:       DefaultNamespace,
@@ -158,6 +165,11 @@ func (c *Config) loadFromEnv() error {
 
 	if v := os.Getenv("LAUNCHPAD_TENANT_NAME"); v != "" {
 		c.TenantName = v
+	}
+
+	// Runner configuration
+	if v := os.Getenv("LAUNCHPAD_RUNNER_TYPE"); v != "" {
+		c.RunnerType = v
 	}
 
 	// Kubernetes configuration

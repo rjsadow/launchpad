@@ -14,8 +14,8 @@ import (
 
 	"github.com/rjsadow/launchpad/internal/config"
 	"github.com/rjsadow/launchpad/internal/db"
-	"github.com/rjsadow/launchpad/internal/k8s"
 	"github.com/rjsadow/launchpad/internal/middleware"
+	"github.com/rjsadow/launchpad/internal/runner"
 	"github.com/rjsadow/launchpad/internal/sessions"
 	"github.com/rjsadow/launchpad/internal/websocket"
 )
@@ -41,8 +41,18 @@ func main() {
 		log.Fatalf("Configuration error:\n%v\n\nSee .env.example for configuration options.", err)
 	}
 
-	// Initialize Kubernetes configuration
-	k8s.Configure(appConfig.Namespace, appConfig.Kubeconfig, appConfig.VNCSidecarImage)
+	// Initialize workload runner
+	runnerCfg := &runner.Config{
+		Namespace:       appConfig.Namespace,
+		Kubeconfig:      appConfig.Kubeconfig,
+		VNCSidecarImage: appConfig.VNCSidecarImage,
+	}
+	workloadRunner, err := runner.New(appConfig.RunnerType, runnerCfg)
+	if err != nil {
+		log.Fatalf("Failed to initialize %s runner: %v", appConfig.RunnerType, err)
+	}
+	defer workloadRunner.Close()
+	log.Printf("Workload runner initialized: %s", workloadRunner.Type())
 
 	// Initialize database
 	database, err = db.Open(appConfig.DB)
@@ -59,7 +69,7 @@ func main() {
 	}
 
 	// Initialize session manager with config
-	sessionManager = sessions.NewManagerWithConfig(database, sessions.ManagerConfig{
+	sessionManager = sessions.NewManagerWithConfig(database, workloadRunner, sessions.ManagerConfig{
 		SessionTimeout:  appConfig.SessionTimeout,
 		CleanupInterval: appConfig.SessionCleanupInterval,
 		PodReadyTimeout: appConfig.PodReadyTimeout,

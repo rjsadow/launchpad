@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rjsadow/launchpad/internal/db"
-	"github.com/rjsadow/launchpad/internal/k8s"
+	"github.com/rjsadow/launchpad/internal/runner"
 )
 
 const (
@@ -33,6 +33,7 @@ type ManagerConfig struct {
 // Manager handles session lifecycle
 type Manager struct {
 	db              *db.DB
+	runner          runner.Runner
 	sessionTimeout  time.Duration
 	cleanupInterval time.Duration
 	podReadyTimeout time.Duration
@@ -44,8 +45,8 @@ type Manager struct {
 
 // NewManager creates a new session manager with default configuration.
 // Deprecated: Use NewManagerWithConfig for explicit configuration.
-func NewManager(database *db.DB) *Manager {
-	return NewManagerWithConfig(database, ManagerConfig{
+func NewManager(database *db.DB, r runner.Runner) *Manager {
+	return NewManagerWithConfig(database, r, ManagerConfig{
 		SessionTimeout:  DefaultSessionTimeout,
 		CleanupInterval: DefaultCleanupInterval,
 		PodReadyTimeout: DefaultPodReadyTimeout,
@@ -53,7 +54,7 @@ func NewManager(database *db.DB) *Manager {
 }
 
 // NewManagerWithConfig creates a new session manager with the given configuration.
-func NewManagerWithConfig(database *db.DB, cfg ManagerConfig) *Manager {
+func NewManagerWithConfig(database *db.DB, r runner.Runner, cfg ManagerConfig) *Manager {
 	// Apply defaults for zero values
 	if cfg.SessionTimeout == 0 {
 		cfg.SessionTimeout = DefaultSessionTimeout
@@ -67,6 +68,7 @@ func NewManagerWithConfig(database *db.DB, cfg ManagerConfig) *Manager {
 
 	return &Manager{
 		db:              database,
+		runner:          r,
 		sessionTimeout:  cfg.SessionTimeout,
 		cleanupInterval: cfg.CleanupInterval,
 		podReadyTimeout: cfg.PodReadyTimeout,
@@ -78,7 +80,8 @@ func NewManagerWithConfig(database *db.DB, cfg ManagerConfig) *Manager {
 // Start begins the background cleanup goroutine
 func (m *Manager) Start() {
 	go m.cleanupLoop()
-	log.Printf("Session manager started (timeout: %v, cleanup interval: %v)", m.sessionTimeout, m.cleanupInterval)
+	log.Printf("Session manager started (timeout: %v, cleanup interval: %v, runner: %s)",
+		m.sessionTimeout, m.cleanupInterval, m.runner.Type())
 }
 
 // Stop stops the background cleanup goroutine
@@ -111,7 +114,7 @@ func (m *Manager) cleanupStaleSessions() error {
 	}
 
 	for _, session := range sessions {
-		log.Printf("Expiring stale session: %s (pod: %s)", session.ID, session.PodName)
+		log.Printf("Expiring stale session: %s (workload: %s)", session.ID, session.PodName)
 		if err := m.ExpireSession(context.Background(), session.ID); err != nil {
 			log.Printf("Error expiring stale session %s: %v", session.ID, err)
 		}
@@ -140,14 +143,13 @@ func (m *Manager) CreateSession(ctx context.Context, req *CreateSessionRequest) 
 	// Generate session ID
 	sessionID := uuid.New().String()
 
-	// Create pod configuration
-	podConfig := k8s.DefaultPodConfig(sessionID, app.ID, app.Name, app.ContainerImage)
+	// Create workload configuration
+	workloadConfig := runner.DefaultWorkloadConfig(sessionID, app.ID, app.Name, app.ContainerImage)
 
-	// Build and create the pod
-	pod := k8s.BuildPodSpec(podConfig)
-	createdPod, err := k8s.CreatePod(ctx, pod)
+	// Create the workload using the runner
+	workload, err := m.runner.CreateWorkload(ctx, workloadConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create pod: %w", err)
+		return nil, fmt.Errorf("failed to create workload: %w", err)
 	}
 
 	// Create session in database
@@ -156,15 +158,17 @@ func (m *Manager) CreateSession(ctx context.Context, req *CreateSessionRequest) 
 		ID:        sessionID,
 		UserID:    req.UserID,
 		AppID:     req.AppID,
-		PodName:   createdPod.Name,
+		PodName:   workload.Name,
 		Status:    db.SessionStatusCreating,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
 
 	if err := m.db.CreateSession(*session); err != nil {
-		// Try to clean up the pod
-		k8s.DeletePod(ctx, createdPod.Name)
+		// Try to clean up the workload
+		if delErr := m.runner.DeleteWorkload(ctx, sessionID); delErr != nil {
+			log.Printf("Warning: failed to cleanup workload after db error: %v", delErr)
+		}
 		return nil, fmt.Errorf("failed to create session in database: %w", err)
 	}
 
@@ -173,38 +177,38 @@ func (m *Manager) CreateSession(ctx context.Context, req *CreateSessionRequest) 
 	m.sessions[sessionID] = session
 	m.mu.Unlock()
 
-	// Start goroutine to wait for pod ready and update session
-	go m.waitForPodReady(sessionID, createdPod.Name)
+	// Start goroutine to wait for workload ready and update session
+	go m.waitForWorkloadReady(sessionID)
 
 	return session, nil
 }
 
-// waitForPodReady waits for the pod to be ready and updates the session
-func (m *Manager) waitForPodReady(sessionID, podName string) {
+// waitForWorkloadReady waits for the workload to be ready and updates the session
+func (m *Manager) waitForWorkloadReady(sessionID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.podReadyTimeout)
 	defer cancel()
 
-	// Wait for pod to be ready
-	if err := k8s.WaitForPodReady(ctx, podName, m.podReadyTimeout); err != nil {
-		LogTransition(sessionID, db.SessionStatusCreating, db.SessionStatusFailed, fmt.Sprintf("pod failed to become ready: %v", err))
+	// Wait for workload to be ready
+	if err := m.runner.WaitForReady(ctx, sessionID, m.podReadyTimeout); err != nil {
+		LogTransition(sessionID, db.SessionStatusCreating, db.SessionStatusFailed, fmt.Sprintf("workload failed to become ready: %v", err))
 		m.db.UpdateSessionStatus(sessionID, db.SessionStatusFailed)
 		return
 	}
 
-	// Get pod IP
-	podIP, err := k8s.GetPodIP(ctx, podName)
+	// Get workload to retrieve IP
+	workload, err := m.runner.GetWorkload(ctx, sessionID)
 	if err != nil {
-		LogTransition(sessionID, db.SessionStatusCreating, db.SessionStatusFailed, fmt.Sprintf("failed to get pod IP: %v", err))
+		LogTransition(sessionID, db.SessionStatusCreating, db.SessionStatusFailed, fmt.Sprintf("failed to get workload: %v", err))
 		m.db.UpdateSessionStatus(sessionID, db.SessionStatusFailed)
 		return
 	}
 
-	// Update session with pod IP and running status
-	if err := m.db.UpdateSessionPodIP(sessionID, podIP); err != nil {
-		log.Printf("Failed to update pod IP for session %s: %v", sessionID, err)
+	// Update session with workload IP and running status
+	if err := m.db.UpdateSessionPodIP(sessionID, workload.IP); err != nil {
+		log.Printf("Failed to update workload IP for session %s: %v", sessionID, err)
 	}
 
-	LogTransition(sessionID, db.SessionStatusCreating, db.SessionStatusRunning, "pod ready")
+	LogTransition(sessionID, db.SessionStatusCreating, db.SessionStatusRunning, "workload ready")
 	if err := m.db.UpdateSessionStatus(sessionID, db.SessionStatusRunning); err != nil {
 		log.Printf("Failed to update session status for %s: %v", sessionID, err)
 	}
@@ -212,7 +216,7 @@ func (m *Manager) waitForPodReady(sessionID, podName string) {
 	// Update cache
 	m.mu.Lock()
 	if session, ok := m.sessions[sessionID]; ok {
-		session.PodIP = podIP
+		session.PodIP = workload.IP
 		session.Status = db.SessionStatusRunning
 	}
 	m.mu.Unlock()
@@ -255,12 +259,12 @@ func (m *Manager) ListSessionsByUser(ctx context.Context, userID string) ([]db.S
 	return sessions, nil
 }
 
-// TerminateSession stops a session (user-initiated) and deletes the pod
+// TerminateSession stops a session (user-initiated) and deletes the workload
 func (m *Manager) TerminateSession(ctx context.Context, sessionID string) error {
 	return m.terminateWithStatus(ctx, sessionID, db.SessionStatusStopped, "user requested")
 }
 
-// ExpireSession expires a session (timeout-initiated) and deletes the pod
+// ExpireSession expires a session (timeout-initiated) and deletes the workload
 func (m *Manager) ExpireSession(ctx context.Context, sessionID string) error {
 	return m.terminateWithStatus(ctx, sessionID, db.SessionStatusExpired, "session timeout")
 }
@@ -286,9 +290,9 @@ func (m *Manager) terminateWithStatus(ctx context.Context, sessionID string, fin
 		return err
 	}
 
-	// Delete the pod
-	if err := k8s.DeletePod(ctx, session.PodName); err != nil {
-		log.Printf("Warning: failed to delete pod %s: %v", session.PodName, err)
+	// Delete the workload
+	if err := m.runner.DeleteWorkload(ctx, sessionID); err != nil {
+		log.Printf("Warning: failed to delete workload for session %s: %v", sessionID, err)
 	}
 
 	// Update status to final state
@@ -313,7 +317,7 @@ func (m *Manager) GetSessionWebSocketURL(session *db.Session) string {
 	return fmt.Sprintf("/ws/sessions/%s", session.ID)
 }
 
-// GetPodWebSocketEndpoint returns the internal pod WebSocket endpoint
+// GetPodWebSocketEndpoint returns the internal workload WebSocket endpoint
 func (m *Manager) GetPodWebSocketEndpoint(session *db.Session) string {
 	if session.PodIP == "" {
 		return ""
