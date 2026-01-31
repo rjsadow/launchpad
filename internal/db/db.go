@@ -28,6 +28,9 @@ type Application struct {
 	Category       string     `json:"category"`
 	LaunchType     LaunchType `json:"launch_type"`
 	ContainerImage string     `json:"container_image,omitempty"`
+	// Spec contains the full application specification for container apps.
+	// This includes resources, environment variables, volumes, and network rules.
+	Spec *AppSpec `json:"spec,omitempty"`
 }
 
 // AppConfig is the JSON structure for apps.json
@@ -105,7 +108,8 @@ func (db *DB) migrate() error {
 		icon TEXT NOT NULL,
 		category TEXT NOT NULL,
 		launch_type TEXT NOT NULL DEFAULT 'url',
-		container_image TEXT DEFAULT ''
+		container_image TEXT DEFAULT '',
+		spec TEXT DEFAULT ''
 	);
 
 	CREATE TABLE IF NOT EXISTS audit_log (
@@ -150,6 +154,7 @@ func (db *DB) migrate() error {
 	migrations := []string{
 		"ALTER TABLE applications ADD COLUMN launch_type TEXT NOT NULL DEFAULT 'url'",
 		"ALTER TABLE applications ADD COLUMN container_image TEXT DEFAULT ''",
+		"ALTER TABLE applications ADD COLUMN spec TEXT DEFAULT ''",
 	}
 
 	for _, migration := range migrations {
@@ -196,7 +201,7 @@ func (db *DB) SeedFromJSON(jsonPath string) error {
 
 // ListApps returns all applications
 func (db *DB) ListApps() ([]Application, error) {
-	rows, err := db.conn.Query("SELECT id, name, description, url, icon, category, launch_type, container_image FROM applications ORDER BY category, name")
+	rows, err := db.conn.Query("SELECT id, name, description, url, icon, category, launch_type, container_image, spec FROM applications ORDER BY category, name")
 	if err != nil {
 		return nil, err
 	}
@@ -205,8 +210,8 @@ func (db *DB) ListApps() ([]Application, error) {
 	var apps []Application
 	for rows.Next() {
 		var app Application
-		var launchType, containerImage string
-		if err := rows.Scan(&app.ID, &app.Name, &app.Description, &app.URL, &app.Icon, &app.Category, &launchType, &containerImage); err != nil {
+		var launchType, containerImage, specJSON string
+		if err := rows.Scan(&app.ID, &app.Name, &app.Description, &app.URL, &app.Icon, &app.Category, &launchType, &containerImage, &specJSON); err != nil {
 			return nil, err
 		}
 		app.LaunchType = LaunchType(launchType)
@@ -214,6 +219,12 @@ func (db *DB) ListApps() ([]Application, error) {
 			app.LaunchType = LaunchTypeURL
 		}
 		app.ContainerImage = containerImage
+		if specJSON != "" {
+			var spec AppSpec
+			if err := json.Unmarshal([]byte(specJSON), &spec); err == nil {
+				app.Spec = &spec
+			}
+		}
 		apps = append(apps, app)
 	}
 
@@ -223,11 +234,11 @@ func (db *DB) ListApps() ([]Application, error) {
 // GetApp returns a single application by ID
 func (db *DB) GetApp(id string) (*Application, error) {
 	var app Application
-	var launchType, containerImage string
+	var launchType, containerImage, specJSON string
 	err := db.conn.QueryRow(
-		"SELECT id, name, description, url, icon, category, launch_type, container_image FROM applications WHERE id = ?",
+		"SELECT id, name, description, url, icon, category, launch_type, container_image, spec FROM applications WHERE id = ?",
 		id,
-	).Scan(&app.ID, &app.Name, &app.Description, &app.URL, &app.Icon, &app.Category, &launchType, &containerImage)
+	).Scan(&app.ID, &app.Name, &app.Description, &app.URL, &app.Icon, &app.Category, &launchType, &containerImage, &specJSON)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -240,6 +251,12 @@ func (db *DB) GetApp(id string) (*Application, error) {
 		app.LaunchType = LaunchTypeURL
 	}
 	app.ContainerImage = containerImage
+	if specJSON != "" {
+		var spec AppSpec
+		if err := json.Unmarshal([]byte(specJSON), &spec); err == nil {
+			app.Spec = &spec
+		}
+	}
 	return &app, nil
 }
 
@@ -249,9 +266,15 @@ func (db *DB) CreateApp(app Application) error {
 	if launchType == "" {
 		launchType = string(LaunchTypeURL)
 	}
+	specJSON := ""
+	if app.Spec != nil {
+		if data, err := json.Marshal(app.Spec); err == nil {
+			specJSON = string(data)
+		}
+	}
 	_, err := db.conn.Exec(
-		"INSERT INTO applications (id, name, description, url, icon, category, launch_type, container_image) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		app.ID, app.Name, app.Description, app.URL, app.Icon, app.Category, launchType, app.ContainerImage,
+		"INSERT INTO applications (id, name, description, url, icon, category, launch_type, container_image, spec) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		app.ID, app.Name, app.Description, app.URL, app.Icon, app.Category, launchType, app.ContainerImage, specJSON,
 	)
 	return err
 }
@@ -262,9 +285,15 @@ func (db *DB) UpdateApp(app Application) error {
 	if launchType == "" {
 		launchType = string(LaunchTypeURL)
 	}
+	specJSON := ""
+	if app.Spec != nil {
+		if data, err := json.Marshal(app.Spec); err == nil {
+			specJSON = string(data)
+		}
+	}
 	result, err := db.conn.Exec(
-		"UPDATE applications SET name = ?, description = ?, url = ?, icon = ?, category = ?, launch_type = ?, container_image = ? WHERE id = ?",
-		app.Name, app.Description, app.URL, app.Icon, app.Category, launchType, app.ContainerImage, app.ID,
+		"UPDATE applications SET name = ?, description = ?, url = ?, icon = ?, category = ?, launch_type = ?, container_image = ?, spec = ? WHERE id = ?",
+		app.Name, app.Description, app.URL, app.Icon, app.Category, launchType, app.ContainerImage, specJSON, app.ID,
 	)
 	if err != nil {
 		return err
