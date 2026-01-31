@@ -11,12 +11,12 @@ custom applications. Simple, effective, reliable, secure.
 
 ### Core Features
 
-- [ ] Static landing page with branding
-- [ ] Application grid/list view displaying configured apps
-- [ ] Click-to-launch functionality (opens apps in new tab)
-- [ ] Search/filter applications by name
-- [ ] JSON-based application configuration
-- [ ] Responsive design (desktop + mobile)
+- [x] Static landing page with branding
+- [x] Application grid/list view displaying configured apps
+- [x] Click-to-launch functionality (opens apps in new tab)
+- [x] Search/filter applications by name
+- [x] JSON-based application configuration
+- [x] Responsive design (desktop + mobile)
 
 ### Tech Stack (Recommended)
 
@@ -46,9 +46,9 @@ custom applications. Simple, effective, reliable, secure.
 
 ## Phase 2: Enhanced UX
 
-- [ ] Categories/folders for application grouping
-- [ ] User preferences (favorites, recent apps)
-- [ ] Dark mode toggle
+- [x] Categories/folders for application grouping
+- [x] User preferences (favorites, recent apps)
+- [x] Dark mode toggle
 - [ ] Keyboard navigation and shortcuts
 - [ ] Application health status indicators
 
@@ -65,11 +65,31 @@ custom applications. Simple, effective, reliable, secure.
 
 ## Phase 4: Enterprise Features
 
-- [ ] Application usage analytics
-- [ ] Custom branding per tenant/department
-- [ ] API for programmatic app management
-- [ ] Audit logging
+- [x] Application usage analytics
+- [x] Custom branding per tenant/department
+- [x] API for programmatic app management
+- [x] Audit logging
 - [ ] High availability deployment guide
+
+### Additional Enterprise Features (Implemented)
+
+- [x] Kubernetes Pod Orchestration for container apps
+- [x] Session management with VNC streaming
+- [x] Centralized configuration management
+- [x] WebSocket support for real-time updates
+
+---
+
+## Milestones
+
+See [docs/MILESTONES.md](docs/MILESTONES.md) for GitHub milestone definitions
+and issue mapping.
+
+| Milestone | Phases | Status |
+|-----------|--------|--------|
+| MVP | Phase 1 | Complete |
+| Beta | Phase 2 + 3 | In Progress |
+| GA | Phase 4 | In Progress |
 
 ---
 
