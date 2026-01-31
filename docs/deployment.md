@@ -1,6 +1,7 @@
 # High Availability Deployment Guide
 
-This guide covers deploying Launchpad in a highly available configuration using Kubernetes.
+This guide covers deploying Launchpad in a highly available
+configuration using Kubernetes.
 
 ## Prerequisites
 
@@ -210,7 +211,8 @@ kubectl apply -f ingress.yaml
 
 ### SQLite Limitations
 
-SQLite is suitable for single-instance deployments. For true HA with multiple replicas, consider:
+SQLite is suitable for single-instance deployments. For true HA with
+multiple replicas, consider:
 
 1. **PostgreSQL Migration**: Replace SQLite with PostgreSQL for multi-replica support
 2. **Read Replicas**: Use SQLite with read replicas (Litestream) for read scaling
@@ -218,7 +220,8 @@ SQLite is suitable for single-instance deployments. For true HA with multiple re
 
 ### Load Balancing
 
-The Service and Ingress configuration handles load balancing. For external load balancers:
+The Service and Ingress configuration handles load balancing.
+For external load balancers:
 
 ```yaml
 # service-lb.yaml
@@ -238,7 +241,9 @@ spec:
 
 ### Health Checks
 
-The deployment includes liveness and readiness probes on `/api/apps`. Kubernetes will:
+The deployment includes liveness and readiness probes on `/api/apps`.
+Kubernetes will:
+
 - Restart pods that fail liveness checks
 - Remove pods from service endpoints that fail readiness checks
 
