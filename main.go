@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"flag"
@@ -11,9 +12,13 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/rjsadow/launchpad/internal/admin"
 	"github.com/rjsadow/launchpad/internal/config"
 	"github.com/rjsadow/launchpad/internal/db"
+	"github.com/rjsadow/launchpad/internal/diagnostics"
+	"github.com/rjsadow/launchpad/internal/health"
 	"github.com/rjsadow/launchpad/internal/k8s"
 	"github.com/rjsadow/launchpad/internal/middleware"
 	"github.com/rjsadow/launchpad/internal/sessions"
@@ -23,9 +28,13 @@ import (
 //go:embed web/dist/*
 var embeddedFiles embed.FS
 
+// Version is set at build time
+var Version = "dev"
+
 var database *db.DB
 var sessionManager *sessions.Manager
 var appConfig *config.Config
+var serverStartTime = time.Now()
 
 func main() {
 	// Parse command-line flags (can override env vars)
@@ -70,6 +79,46 @@ func main() {
 	// Initialize WebSocket handler
 	wsHandler := websocket.NewHandler(sessionManager)
 
+	// Initialize health check handler
+	healthHandler := health.NewHandler(Version)
+	healthHandler.RegisterChecker("runtime", health.RuntimeChecker())
+	healthHandler.RegisterChecker("database", func(_ context.Context) health.ComponentHealth {
+		start := time.Now()
+		if _, err := database.GetAppCount(); err != nil {
+			return health.ComponentHealth{
+				Status:  health.StatusUnhealthy,
+				Message: err.Error(),
+			}
+		}
+		return health.ComponentHealth{
+			Status:  health.StatusHealthy,
+			Latency: time.Since(start).String(),
+		}
+	})
+
+	// Initialize diagnostics collector
+	diagCollector := diagnostics.NewCollector(Version)
+	diagCollector.SetDBStatsFunc(func() (diagnostics.DatabaseStats, error) {
+		appCount, _ := database.GetAppCount()
+		sessionCount, _ := database.GetSessionCount()
+		auditCount, _ := database.GetAuditLogCount()
+		return diagnostics.DatabaseStats{
+			AppCount:     appCount,
+			SessionCount: sessionCount,
+			AuditCount:   auditCount,
+		}, nil
+	})
+	diagCollector.SetConfig(map[string]any{
+		"port":      appConfig.Port,
+		"namespace": appConfig.Namespace,
+		"tenant":    appConfig.TenantName,
+	})
+	diagHandler := diagnostics.NewHandler(diagCollector)
+
+	// Initialize admin handler with metrics provider
+	adminProvider := &dbMetricsProvider{db: database}
+	adminHandler := admin.NewHandler(adminProvider)
+
 	// Get the subdirectory from the embedded filesystem
 	distFS, err := fs.Sub(embeddedFiles, "web/dist")
 	if err != nil {
@@ -90,6 +139,17 @@ func main() {
 	// Session API routes
 	http.HandleFunc("/api/sessions", handleSessions)
 	http.HandleFunc("/api/sessions/", handleSessionByID)
+
+	// Health check endpoints
+	http.HandleFunc("/api/health", healthHandler.HandleHealth)
+	http.HandleFunc("/api/health/live", healthHandler.HandleLive)
+	http.HandleFunc("/api/health/ready", healthHandler.HandleReady)
+
+	// Admin API endpoints
+	http.HandleFunc("/api/admin/diagnostics", diagHandler.HandleDiagnostics)
+	http.HandleFunc("/api/admin/support-bundle", diagHandler.HandleSupportBundle)
+	http.HandleFunc("/api/admin/metrics", adminHandler.HandleMetrics)
+	http.HandleFunc("/api/admin/sessions", adminHandler.HandleSessions)
 
 	// WebSocket route for session VNC streams
 	http.Handle("/ws/sessions/", wsHandler)
@@ -565,4 +625,63 @@ func handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// dbMetricsProvider implements admin.MetricsProvider using the database.
+type dbMetricsProvider struct {
+	db *db.DB
+}
+
+func (p *dbMetricsProvider) GetAppCount() (int, error) {
+	return p.db.GetAppCount()
+}
+
+func (p *dbMetricsProvider) GetActiveSessionCount() (int, error) {
+	return p.db.GetActiveSessionCount()
+}
+
+func (p *dbMetricsProvider) GetTotalLaunches() (int, error) {
+	return p.db.GetTotalLaunches()
+}
+
+func (p *dbMetricsProvider) GetRecentAuditLogs(limit int) ([]admin.ActivityEntry, error) {
+	logs, err := p.db.GetRecentAuditLogs(limit)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]admin.ActivityEntry, len(logs))
+	for i, l := range logs {
+		entries[i] = admin.ActivityEntry{
+			Timestamp: l.Timestamp,
+			Action:    l.Action,
+			User:      l.User,
+			Details:   l.Details,
+		}
+	}
+	return entries, nil
+}
+
+func (p *dbMetricsProvider) GetSessionsByState() (map[string]int, error) {
+	return p.db.GetSessionsByState()
+}
+
+func (p *dbMetricsProvider) GetAllSessions() ([]admin.SessionInfo, error) {
+	sessions, err := p.db.GetAllSessions()
+	if err != nil {
+		return nil, err
+	}
+	infos := make([]admin.SessionInfo, len(sessions))
+	for i, s := range sessions {
+		infos[i] = admin.SessionInfo{
+			ID:        s.ID,
+			UserID:    s.UserID,
+			AppID:     s.AppID,
+			AppName:   s.AppName,
+			Status:    s.Status,
+			CreatedAt: s.CreatedAt,
+			UpdatedAt: s.UpdatedAt,
+			Duration:  s.Duration,
+		}
+	}
+	return infos, nil
 }

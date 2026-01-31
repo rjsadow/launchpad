@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Application, AppConfig, User } from './types';
 import { SessionModal } from './components/SessionModal';
 import { Login } from './components/Login';
+import { AdminDashboard } from './components/AdminDashboard';
 
 function App() {
   const [user, setUser] = useState<User | null>(() => {
@@ -22,6 +23,7 @@ function App() {
   });
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const [selectedContainerApp, setSelectedContainerApp] = useState<Application | null>(null);
+  const [showAdminDashboard, setShowAdminDashboard] = useState(false);
   const appRefs = useRef<(HTMLButtonElement | HTMLAnchorElement | null)[]>([]);
 
   useEffect(() => {
@@ -238,6 +240,22 @@ function App() {
                   </svg>
                 )}
               </button>
+              {/* Admin button */}
+              <button
+                onClick={() => setShowAdminDashboard(true)}
+                className="p-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+                aria-label="Admin Dashboard"
+                title="Admin Dashboard"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"
+                  />
+                </svg>
+              </button>
               {/* User menu */}
               <div className="flex items-center gap-2 pl-2 border-l border-white/20">
                 <span className="text-sm hidden sm:inline">{user.displayName || user.username}</span>
@@ -448,6 +466,14 @@ function App() {
           isOpen={!!selectedContainerApp}
           onClose={() => setSelectedContainerApp(null)}
           darkMode={darkMode}
+        />
+      )}
+
+      {/* Admin Dashboard */}
+      {showAdminDashboard && (
+        <AdminDashboard
+          darkMode={darkMode}
+          onClose={() => setShowAdminDashboard(false)}
         />
       )}
     </div>
