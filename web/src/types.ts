@@ -33,3 +33,8 @@ export interface CreateSessionRequest {
   app_id: string;
   user_id?: string;
 }
+
+export interface User {
+  username: string;
+  displayName?: string;
+}
