@@ -130,6 +130,7 @@ Memory: 512Mi request / 2Gi limit).
 ```
 
 Resource limits use Kubernetes resource quantity notation:
+
 - **CPU**: millicores (e.g., "100m" = 0.1 CPU, "2" = 2 CPUs)
 - **Memory**: bytes with suffix (e.g., "256Mi", "1Gi", "2Gi")
 
