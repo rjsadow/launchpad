@@ -30,6 +30,9 @@ FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=backend /app/launchpad /launchpad
 
+# Set writable DB path for nonroot container
+ENV LAUNCHPAD_DB_PATH=/tmp/launchpad.db
+
 EXPOSE 8080
 
 ENTRYPOINT ["/launchpad"]
