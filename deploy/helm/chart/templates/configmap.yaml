@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "launchpad.fullname" . }}
+  labels:
+    {{- include "launchpad.labels" . | nindent 4 }}
+data:
+  # Server configuration
+  LAUNCHPAD_PORT: {{ .Values.launchpad.server.port | quote }}
+  LAUNCHPAD_DB: {{ .Values.launchpad.server.database | quote }}
+
+  # Branding configuration
+  {{- if .Values.launchpad.branding.logoUrl }}
+  LAUNCHPAD_LOGO_URL: {{ .Values.launchpad.branding.logoUrl | quote }}
+  {{- end }}
+  LAUNCHPAD_PRIMARY_COLOR: {{ .Values.launchpad.branding.primaryColor | quote }}
+  LAUNCHPAD_SECONDARY_COLOR: {{ .Values.launchpad.branding.secondaryColor | quote }}
+  LAUNCHPAD_TENANT_NAME: {{ .Values.launchpad.branding.tenantName | quote }}
+
+  # Kubernetes configuration
+  LAUNCHPAD_VNC_SIDECAR_IMAGE: {{ .Values.launchpad.kubernetes.vncSidecarImage | quote }}
+
+  # Session configuration
+  LAUNCHPAD_SESSION_TIMEOUT: {{ .Values.launchpad.session.timeout | quote }}
+  LAUNCHPAD_SESSION_CLEANUP_INTERVAL: {{ .Values.launchpad.session.cleanupInterval | quote }}
+  LAUNCHPAD_POD_READY_TIMEOUT: {{ .Values.launchpad.session.podReadyTimeout | quote }}

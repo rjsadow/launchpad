@@ -1,0 +1,53 @@
+# Launchpad Docker Compose
+# For local development and testing without Kubernetes
+#
+# Usage:
+#   docker-compose up -d        # Start services
+#   docker-compose logs -f      # View logs
+#   docker-compose down         # Stop services
+#   docker-compose down -v      # Stop and remove volumes
+#
+# Access Launchpad at http://localhost:8080
+
+services:
+  launchpad:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: launchpad
+    ports:
+      - "8080:8080"
+    environment:
+      # Server configuration
+      LAUNCHPAD_PORT: "8080"
+      LAUNCHPAD_DB: "/data/launchpad.db"
+
+      # Branding configuration (customize as needed)
+      # LAUNCHPAD_LOGO_URL: "https://example.com/logo.png"
+      LAUNCHPAD_PRIMARY_COLOR: "#398D9B"
+      LAUNCHPAD_SECONDARY_COLOR: "#4AB7C3"
+      LAUNCHPAD_TENANT_NAME: "Launchpad"
+
+      # Session configuration
+      LAUNCHPAD_SESSION_TIMEOUT: "120"
+      LAUNCHPAD_SESSION_CLEANUP_INTERVAL: "5"
+      LAUNCHPAD_POD_READY_TIMEOUT: "120"
+
+      # Note: Container sessions require Kubernetes.
+      # In docker-compose mode, only URL-based app launches work.
+    volumes:
+      # Persist database across restarts
+      - launchpad-data:/data
+      # Optional: Mount custom apps.json for seeding
+      # - ./apps.json:/app/apps.json:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/api/config"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  launchpad-data:
+    name: launchpad-data

@@ -1,0 +1,221 @@
+# Launchpad Helm Chart Values
+# This file documents all configurable parameters for the Launchpad deployment.
+
+# =============================================================================
+# Image Configuration
+# =============================================================================
+image:
+  # Container image repository
+  repository: ghcr.io/rjsadow/launchpad
+  # Image pull policy (Always, IfNotPresent, Never)
+  pullPolicy: Always
+  # Image tag (defaults to Chart appVersion if not set)
+  tag: ""
+
+# Image pull secrets for private registries
+imagePullSecrets: []
+
+# Override the chart name
+nameOverride: ""
+fullnameOverride: ""
+
+# =============================================================================
+# Replica Configuration
+# =============================================================================
+# Number of replicas (SQLite limits this to 1 for write consistency)
+replicaCount: 1
+
+# =============================================================================
+# Service Account
+# =============================================================================
+serviceAccount:
+  # Create a service account
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # Name of the service account (auto-generated if not set)
+  name: ""
+
+# =============================================================================
+# Pod Configuration
+# =============================================================================
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# =============================================================================
+# Service Configuration
+# =============================================================================
+service:
+  # Service type (ClusterIP, NodePort, LoadBalancer)
+  type: ClusterIP
+  # Service port
+  port: 80
+  # Target container port
+  targetPort: 8080
+
+# =============================================================================
+# Ingress Configuration
+# =============================================================================
+ingress:
+  # Enable ingress
+  enabled: false
+  # Ingress class name
+  className: ""
+  # Ingress annotations
+  annotations: {}
+    # nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    # nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # nginx.ingress.kubernetes.io/websocket-services: "launchpad"
+  # Ingress hosts
+  hosts:
+    - host: launchpad.local
+      paths:
+        - path: /
+          pathType: Prefix
+  # TLS configuration
+  tls: []
+  #  - secretName: launchpad-tls
+  #    hosts:
+  #      - launchpad.local
+
+# =============================================================================
+# Resource Limits
+# =============================================================================
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# =============================================================================
+# Health Probes
+# =============================================================================
+# Liveness probe - restarts container if it fails
+livenessProbe:
+  httpGet:
+    path: /api/config
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# Readiness probe - removes from service if it fails
+readinessProbe:
+  httpGet:
+    path: /api/config
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# =============================================================================
+# Autoscaling (disabled by default due to SQLite)
+# =============================================================================
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 1
+  targetCPUUtilizationPercentage: 80
+
+# =============================================================================
+# Node Selection
+# =============================================================================
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# =============================================================================
+# Launchpad Application Configuration
+# =============================================================================
+launchpad:
+  # Server configuration
+  server:
+    # Port the server listens on (inside container)
+    port: 8080
+    # Path to SQLite database file
+    database: /data/launchpad.db
+
+  # Branding configuration
+  branding:
+    # Logo URL for the application header
+    logoUrl: ""
+    # Primary brand color (hex format: #RRGGBB)
+    primaryColor: "#398D9B"
+    # Secondary brand color (hex format: #RRGGBB)
+    secondaryColor: "#4AB7C3"
+    # Tenant/organization name displayed in the UI
+    tenantName: "Launchpad"
+
+  # Kubernetes integration (for container sessions)
+  kubernetes:
+    # Namespace for session pods (defaults to release namespace)
+    namespace: ""
+    # VNC sidecar container image
+    vncSidecarImage: ghcr.io/rjsadow/launchpad-vnc-sidecar:latest
+
+  # Session configuration
+  session:
+    # Session timeout in minutes
+    timeout: 120
+    # Cleanup interval in minutes
+    cleanupInterval: 5
+    # Pod ready timeout in seconds
+    podReadyTimeout: 120
+
+# =============================================================================
+# Persistence
+# =============================================================================
+persistence:
+  # Enable persistent storage for SQLite database
+  enabled: false
+  # Storage class (empty uses default)
+  storageClass: ""
+  # Access mode
+  accessMode: ReadWriteOnce
+  # Storage size
+  size: 1Gi
+  # Existing PVC name (if using pre-created PVC)
+  existingClaim: ""
+
+# =============================================================================
+# RBAC
+# =============================================================================
+rbac:
+  # Create RBAC resources for session pod management
+  create: true
+
+# =============================================================================
+# Network Policy
+# =============================================================================
+networkPolicy:
+  # Enable network policy
+  enabled: false
+
+# =============================================================================
+# Resource Quota
+# =============================================================================
+resourceQuota:
+  # Enable resource quota for session pods
+  enabled: false
+  # Maximum number of session pods
+  maxPods: 10
+  # CPU request limit for all session pods
+  requestsCpu: "4"
+  # Memory request limit for all session pods
+  requestsMemory: "8Gi"
