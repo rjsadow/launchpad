@@ -1,0 +1,21 @@
+# Gitleaks configuration for Launchpad
+# See: https://github.com/gitleaks/gitleaks#configuration
+
+[extend]
+# Use default gitleaks config as base
+useDefault = true
+
+[allowlist]
+description = "Allowlist for known false positives"
+
+# RFC 6455 WebSocket example key used in documentation
+# This is the standard example key "dGhlIHNhbXBsZSBub25jZQ==" (base64 for "the sample nonce")
+# from the WebSocket protocol specification, commonly used in curl examples
+regexes = [
+  '''dGhlIHNhbXBsZSBub25jZQ==''',
+]
+
+# Alternatively, allowlist by path for documentation examples
+paths = [
+  '''docs/REVERSE_PROXY\.md''',
+]
