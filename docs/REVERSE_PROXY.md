@@ -89,7 +89,8 @@ server {
     # Security Headers
     # ==========================================================
 
-    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+    add_header Strict-Transport-Security \
+        "max-age=63072000; includeSubDomains; preload" always;
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-XSS-Protection "1; mode=block" always;
@@ -97,7 +98,10 @@ server {
     add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
 
     # Content Security Policy (adjust as needed for your deployment)
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' wss://$server_name; frame-ancestors 'self';" always;
+    add_header Content-Security-Policy \
+        "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; \
+        style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; \
+        connect-src 'self' wss://$server_name; frame-ancestors 'self';" always;
 
     # ==========================================================
     # Logging
@@ -276,7 +280,7 @@ curl -i -N \
 ### Route Summary
 
 | Path Pattern | Backend | Notes |
-|--------------|---------|-------|
+| ------------ | ------- | ----- |
 | `/api/*` | Launchpad | REST API endpoints |
 | `/ws/*` | Launchpad | WebSocket (VNC streams) |
 | `/` | Launchpad | Frontend static files |
@@ -333,8 +337,8 @@ proxy_set_header X-Forwarded-Port $server_port;
 ### Security Headers Reference
 
 | Header | Value | Purpose |
-|--------|-------|---------|
-| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains` | Force HTTPS |
+| ------ | ----- | ------- |
+| `Strict-Transport-Security` | `max-age=63072000` | Force HTTPS |
 | `X-Frame-Options` | `SAMEORIGIN` | Prevent clickjacking |
 | `X-Content-Type-Options` | `nosniff` | Prevent MIME sniffing |
 | `X-XSS-Protection` | `1; mode=block` | XSS filter |
@@ -436,20 +440,24 @@ Should return `101 Switching Protocols` (when session exists).
 
 ### Common Issues
 
-**502 Bad Gateway**
+#### 502 Bad Gateway
+
 - Backend not running: `systemctl status launchpad`
 - Firewall blocking: `sudo ufw status`
 - Wrong upstream address: Check `proxy_pass` directive
 
-**WebSocket disconnects**
+#### WebSocket disconnects
+
 - Timeout too short: Increase `proxy_read_timeout`
 - Load balancer in path: Ensure sticky sessions or direct connection
 
-**Mixed content warnings**
+#### Mixed content warnings
+
 - Missing `X-Forwarded-Proto`: Add header in proxy config
 - Hardcoded HTTP URLs: Check application configuration
 
-**Certificate errors**
+#### Certificate errors
+
 - Wrong domain: Verify `server_name` matches certificate
 - Expired certificate: Run `certbot renew`
 - Missing chain: Include intermediate certificates
