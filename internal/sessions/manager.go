@@ -2,9 +2,9 @@ package sessions
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,6 +28,10 @@ type ManagerConfig struct {
 	SessionTimeout  time.Duration
 	CleanupInterval time.Duration
 	PodReadyTimeout time.Duration
+
+	// Cache is the session cache to use. If nil, an in-memory cache is used.
+	// For horizontal scalability, use a Redis cache.
+	Cache SessionCache
 }
 
 // Manager handles session lifecycle
@@ -37,9 +41,8 @@ type Manager struct {
 	cleanupInterval time.Duration
 	podReadyTimeout time.Duration
 
-	mu       sync.RWMutex
-	stopCh   chan struct{}
-	sessions map[string]*db.Session
+	cache  SessionCache
+	stopCh chan struct{}
 }
 
 // NewManager creates a new session manager with default configuration.
@@ -65,13 +68,19 @@ func NewManagerWithConfig(database *db.DB, cfg ManagerConfig) *Manager {
 		cfg.PodReadyTimeout = DefaultPodReadyTimeout
 	}
 
+	// Use provided cache or default to in-memory
+	cache := cfg.Cache
+	if cache == nil {
+		cache = NewInMemoryCache()
+	}
+
 	return &Manager{
 		db:              database,
 		sessionTimeout:  cfg.SessionTimeout,
 		cleanupInterval: cfg.CleanupInterval,
 		podReadyTimeout: cfg.PodReadyTimeout,
+		cache:           cache,
 		stopCh:          make(chan struct{}),
-		sessions:        make(map[string]*db.Session),
 	}
 }
 
@@ -168,10 +177,10 @@ func (m *Manager) CreateSession(ctx context.Context, req *CreateSessionRequest) 
 		return nil, fmt.Errorf("failed to create session in database: %w", err)
 	}
 
-	// Cache the session
-	m.mu.Lock()
-	m.sessions[sessionID] = session
-	m.mu.Unlock()
+	// Cache the session (TTL slightly longer than session timeout to allow cleanup)
+	if err := m.cache.Set(ctx, session, m.sessionTimeout+10*time.Minute); err != nil {
+		log.Printf("Warning: failed to cache session %s: %v", sessionID, err)
+	}
 
 	// Start goroutine to wait for pod ready and update session
 	go m.waitForPodReady(sessionID, createdPod.Name)
@@ -209,29 +218,50 @@ func (m *Manager) waitForPodReady(sessionID, podName string) {
 		log.Printf("Failed to update session status for %s: %v", sessionID, err)
 	}
 
-	// Update cache
-	m.mu.Lock()
-	if session, ok := m.sessions[sessionID]; ok {
-		session.PodIP = podIP
-		session.Status = db.SessionStatusRunning
+	// Update cache with the updated session
+	updatedSession := &db.Session{
+		ID:        sessionID,
+		PodIP:     podIP,
+		Status:    db.SessionStatusRunning,
+		UpdatedAt: time.Now(),
 	}
-	m.mu.Unlock()
+	// Load full session from DB to get all fields, then update cache
+	if fullSession, err := m.db.GetSession(sessionID); err == nil && fullSession != nil {
+		fullSession.PodIP = podIP
+		fullSession.Status = db.SessionStatusRunning
+		if err := m.cache.Set(ctx, fullSession, m.sessionTimeout+10*time.Minute); err != nil {
+			log.Printf("Warning: failed to update cache for session %s: %v", sessionID, err)
+		}
+	} else {
+		// Fallback: cache partial session info
+		if err := m.cache.Set(ctx, updatedSession, m.sessionTimeout+10*time.Minute); err != nil {
+			log.Printf("Warning: failed to cache session %s: %v", sessionID, err)
+		}
+	}
 }
 
 // GetSession returns a session by ID
 func (m *Manager) GetSession(ctx context.Context, sessionID string) (*db.Session, error) {
 	// Check cache first
-	m.mu.RLock()
-	if session, ok := m.sessions[sessionID]; ok {
-		m.mu.RUnlock()
+	session, err := m.cache.Get(ctx, sessionID)
+	if err == nil {
 		return session, nil
 	}
-	m.mu.RUnlock()
+	if !errors.Is(err, ErrCacheMiss) {
+		log.Printf("Warning: cache error for session %s: %v", sessionID, err)
+	}
 
 	// Load from database
-	session, err := m.db.GetSession(sessionID)
+	session, err = m.db.GetSession(sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session: %w", err)
+	}
+
+	// Populate cache for future reads
+	if session != nil {
+		if cacheErr := m.cache.Set(ctx, session, m.sessionTimeout+10*time.Minute); cacheErr != nil {
+			log.Printf("Warning: failed to cache session %s: %v", sessionID, cacheErr)
+		}
 	}
 
 	return session, nil
@@ -297,9 +327,9 @@ func (m *Manager) terminateWithStatus(ctx context.Context, sessionID string, fin
 	}
 
 	// Remove from cache
-	m.mu.Lock()
-	delete(m.sessions, sessionID)
-	m.mu.Unlock()
+	if err := m.cache.Delete(ctx, sessionID); err != nil {
+		log.Printf("Warning: failed to remove session %s from cache: %v", sessionID, err)
+	}
 
 	return nil
 }

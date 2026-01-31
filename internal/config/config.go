@@ -35,6 +35,12 @@ type Config struct {
 	SessionTimeout         time.Duration
 	SessionCleanupInterval time.Duration
 	PodReadyTimeout        time.Duration
+
+	// Redis configuration (for horizontal scalability)
+	RedisEnabled  bool
+	RedisAddress  string
+	RedisPassword string
+	RedisDB       int
 }
 
 // ValidationError represents a configuration validation error.
@@ -74,6 +80,7 @@ const (
 	DefaultSessionTimeout         = 2 * time.Hour
 	DefaultSessionCleanupInterval = 5 * time.Minute
 	DefaultPodReadyTimeout        = 2 * time.Minute
+	DefaultRedisAddress           = "localhost:6379"
 )
 
 // Load reads configuration from environment variables and returns a Config.
@@ -222,6 +229,38 @@ func (c *Config) loadFromEnv() error {
 			})
 		} else {
 			c.PodReadyTimeout = time.Duration(seconds) * time.Second
+		}
+	}
+
+	// Redis configuration
+	if v := os.Getenv("LAUNCHPAD_REDIS_ENABLED"); v != "" {
+		c.RedisEnabled = strings.ToLower(v) == "true" || v == "1"
+	}
+
+	if v := os.Getenv("LAUNCHPAD_REDIS_ADDRESS"); v != "" {
+		c.RedisAddress = v
+	} else {
+		c.RedisAddress = DefaultRedisAddress
+	}
+
+	if v := os.Getenv("LAUNCHPAD_REDIS_PASSWORD"); v != "" {
+		c.RedisPassword = v
+	}
+
+	if v := os.Getenv("LAUNCHPAD_REDIS_DB"); v != "" {
+		dbNum, err := strconv.Atoi(v)
+		if err != nil {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_REDIS_DB",
+				Message: fmt.Sprintf("invalid database number: %q (must be an integer)", v),
+			})
+		} else if dbNum < 0 {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_REDIS_DB",
+				Message: fmt.Sprintf("database number must be non-negative: %d", dbNum),
+			})
+		} else {
+			c.RedisDB = dbNum
 		}
 	}
 
