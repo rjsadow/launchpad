@@ -1,0 +1,17 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # Disable errcheck for now - 20 issues to fix
+  # TODO: Enable errcheck after addressing unchecked error returns
+  disable:
+    - errcheck
+
+  settings:
+    staticcheck:
+      checks:
+        - all
+        - -ST1000  # Package comments (can add later)
+        - -QF1001  # De Morgan's law suggestions (stylistic)

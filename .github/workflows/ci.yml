@@ -77,8 +77,10 @@ jobs:
             git diff --exit-code go.sum || (echo "go.sum is not tidy" && exit 1)
           fi
 
-      - name: Go vet
-        run: go vet ./...
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
 
       - name: Go build
         run: go build -v -o launchpad .
