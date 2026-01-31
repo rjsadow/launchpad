@@ -33,3 +33,26 @@ export interface CreateSessionRequest {
   app_id: string;
   user_id?: string;
 }
+
+// API error response
+export interface ApiError {
+  error: string;
+  field?: string;
+}
+
+// Application form data for create/edit
+export interface ApplicationFormData {
+  id: string;
+  name: string;
+  description: string;
+  url: string;
+  icon: string;
+  category: string;
+  launch_type: LaunchType;
+  container_image?: string;
+}
+
+// Validation error state
+export interface ValidationErrors {
+  [field: string]: string;
+}
