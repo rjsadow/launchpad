@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"github.com/rjsadow/launchpad/internal/models"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/glebarez/go-sqlite"
 )
 
 // DB wraps the database connection
