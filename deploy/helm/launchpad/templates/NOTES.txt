@@ -1,0 +1,37 @@
+Launchpad has been deployed successfully!
+
+{{- if .Values.ingress.enabled }}
+Access the application at:
+{{- range $host := .Values.ingress.hosts }}
+  {{- range .paths }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}{{ .path }}
+  {{- end }}
+{{- end }}
+{{- else if contains "NodePort" .Values.service.type }}
+Get the application URL by running:
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "launchpad.fullname" . }})
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo http://$NODE_IP:$NODE_PORT
+{{- else if contains "LoadBalancer" .Values.service.type }}
+Get the application URL by running:
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+        You can watch the status by running 'kubectl get --namespace {{ .Release.Namespace }} svc -w {{ include "launchpad.fullname" . }}'
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "launchpad.fullname" . }} --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+  echo http://$SERVICE_IP:{{ .Values.service.port }}
+{{- else if contains "ClusterIP" .Values.service.type }}
+Get the application URL by running:
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "launchpad.fullname" . }} 8080:{{ .Values.service.port }}
+  echo "Visit http://localhost:8080 to access Launchpad"
+{{- end }}
+
+Configuration:
+  - Tenant: {{ .Values.branding.tenantName }}
+  - Session Timeout: {{ .Values.config.sessionTimeout }} minutes
+  {{- if .Values.persistence.enabled }}
+  - Persistence: Enabled ({{ .Values.persistence.size }})
+  {{- else }}
+  - Persistence: Disabled (using ephemeral storage)
+  {{- end }}
+
+For more information, see the documentation at:
+  https://github.com/rjsadow/launchpad

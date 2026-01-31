@@ -1,0 +1,15 @@
+apiVersion: v2
+name: launchpad
+description: A centralized application launcher for large organizations
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - launchpad
+  - application-launcher
+  - portal
+home: https://github.com/rjsadow/launchpad
+sources:
+  - https://github.com/rjsadow/launchpad
+maintainers:
+  - name: rjsadow
