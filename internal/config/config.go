@@ -35,6 +35,15 @@ type Config struct {
 	SessionTimeout         time.Duration
 	SessionCleanupInterval time.Duration
 	PodReadyTimeout        time.Duration
+
+	// Gateway configuration
+	GatewayEnabled            bool
+	GatewayMaxConnectionsUser int
+	GatewayMaxConnectionsTotal int
+	GatewayConnectionTimeout  time.Duration
+	GatewayIdleTimeout        time.Duration
+	GatewayHeartbeatInterval  time.Duration
+	GatewayAuthHeader         string
 }
 
 // ValidationError represents a configuration validation error.
@@ -74,6 +83,14 @@ const (
 	DefaultSessionTimeout         = 2 * time.Hour
 	DefaultSessionCleanupInterval = 5 * time.Minute
 	DefaultPodReadyTimeout        = 2 * time.Minute
+
+	// Gateway defaults
+	DefaultGatewayEnabled             = true
+	DefaultGatewayMaxConnectionsUser  = 5
+	DefaultGatewayMaxConnectionsTotal = 1000
+	DefaultGatewayConnectionTimeout   = 2 * time.Hour
+	DefaultGatewayIdleTimeout         = 30 * time.Minute
+	DefaultGatewayHeartbeatInterval   = 30 * time.Second
 )
 
 // Load reads configuration from environment variables and returns a Config.
@@ -99,6 +116,14 @@ func Load() (*Config, error) {
 		SessionTimeout:         DefaultSessionTimeout,
 		SessionCleanupInterval: DefaultSessionCleanupInterval,
 		PodReadyTimeout:        DefaultPodReadyTimeout,
+
+		// Gateway defaults
+		GatewayEnabled:             DefaultGatewayEnabled,
+		GatewayMaxConnectionsUser:  DefaultGatewayMaxConnectionsUser,
+		GatewayMaxConnectionsTotal: DefaultGatewayMaxConnectionsTotal,
+		GatewayConnectionTimeout:   DefaultGatewayConnectionTimeout,
+		GatewayIdleTimeout:         DefaultGatewayIdleTimeout,
+		GatewayHeartbeatInterval:   DefaultGatewayHeartbeatInterval,
 	}
 
 	// Load from environment variables
@@ -223,6 +248,100 @@ func (c *Config) loadFromEnv() error {
 		} else {
 			c.PodReadyTimeout = time.Duration(seconds) * time.Second
 		}
+	}
+
+	// Gateway configuration
+	if v := os.Getenv("LAUNCHPAD_GATEWAY_ENABLED"); v != "" {
+		c.GatewayEnabled = v == "true" || v == "1" || v == "yes"
+	}
+
+	if v := os.Getenv("LAUNCHPAD_GATEWAY_MAX_CONNECTIONS_USER"); v != "" {
+		val, err := strconv.Atoi(v)
+		if err != nil {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_GATEWAY_MAX_CONNECTIONS_USER",
+				Message: fmt.Sprintf("invalid value: %q (must be an integer)", v),
+			})
+		} else if val < 0 {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_GATEWAY_MAX_CONNECTIONS_USER",
+				Message: fmt.Sprintf("value must be non-negative: %d", val),
+			})
+		} else {
+			c.GatewayMaxConnectionsUser = val
+		}
+	}
+
+	if v := os.Getenv("LAUNCHPAD_GATEWAY_MAX_CONNECTIONS_TOTAL"); v != "" {
+		val, err := strconv.Atoi(v)
+		if err != nil {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_GATEWAY_MAX_CONNECTIONS_TOTAL",
+				Message: fmt.Sprintf("invalid value: %q (must be an integer)", v),
+			})
+		} else if val < 0 {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_GATEWAY_MAX_CONNECTIONS_TOTAL",
+				Message: fmt.Sprintf("value must be non-negative: %d", val),
+			})
+		} else {
+			c.GatewayMaxConnectionsTotal = val
+		}
+	}
+
+	if v := os.Getenv("LAUNCHPAD_GATEWAY_CONNECTION_TIMEOUT"); v != "" {
+		minutes, err := strconv.Atoi(v)
+		if err != nil {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_GATEWAY_CONNECTION_TIMEOUT",
+				Message: fmt.Sprintf("invalid timeout: %q (must be an integer representing minutes)", v),
+			})
+		} else if minutes < 0 {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_GATEWAY_CONNECTION_TIMEOUT",
+				Message: fmt.Sprintf("timeout must be non-negative: %d", minutes),
+			})
+		} else {
+			c.GatewayConnectionTimeout = time.Duration(minutes) * time.Minute
+		}
+	}
+
+	if v := os.Getenv("LAUNCHPAD_GATEWAY_IDLE_TIMEOUT"); v != "" {
+		minutes, err := strconv.Atoi(v)
+		if err != nil {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_GATEWAY_IDLE_TIMEOUT",
+				Message: fmt.Sprintf("invalid timeout: %q (must be an integer representing minutes)", v),
+			})
+		} else if minutes < 0 {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_GATEWAY_IDLE_TIMEOUT",
+				Message: fmt.Sprintf("timeout must be non-negative: %d", minutes),
+			})
+		} else {
+			c.GatewayIdleTimeout = time.Duration(minutes) * time.Minute
+		}
+	}
+
+	if v := os.Getenv("LAUNCHPAD_GATEWAY_HEARTBEAT_INTERVAL"); v != "" {
+		seconds, err := strconv.Atoi(v)
+		if err != nil {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_GATEWAY_HEARTBEAT_INTERVAL",
+				Message: fmt.Sprintf("invalid interval: %q (must be an integer representing seconds)", v),
+			})
+		} else if seconds < 0 {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_GATEWAY_HEARTBEAT_INTERVAL",
+				Message: fmt.Sprintf("interval must be non-negative: %d", seconds),
+			})
+		} else {
+			c.GatewayHeartbeatInterval = time.Duration(seconds) * time.Second
+		}
+	}
+
+	if v := os.Getenv("LAUNCHPAD_GATEWAY_AUTH_HEADER"); v != "" {
+		c.GatewayAuthHeader = v
 	}
 
 	if len(parseErrors) > 0 {

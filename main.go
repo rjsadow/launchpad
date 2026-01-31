@@ -14,6 +14,7 @@ import (
 
 	"github.com/rjsadow/launchpad/internal/config"
 	"github.com/rjsadow/launchpad/internal/db"
+	"github.com/rjsadow/launchpad/internal/gateway"
 	"github.com/rjsadow/launchpad/internal/k8s"
 	"github.com/rjsadow/launchpad/internal/middleware"
 	"github.com/rjsadow/launchpad/internal/sessions"
@@ -67,8 +68,38 @@ func main() {
 	sessionManager.Start()
 	defer sessionManager.Stop()
 
-	// Initialize WebSocket handler
+	// Initialize WebSocket handler (legacy, used when gateway is disabled)
 	wsHandler := websocket.NewHandler(sessionManager)
+
+	// Initialize streaming gateway if enabled
+	var streamGateway *gateway.Gateway
+	if appConfig.GatewayEnabled {
+		gwConfig := gateway.Config{
+			MaxConnectionsPerUser: appConfig.GatewayMaxConnectionsUser,
+			MaxConnectionsTotal:   appConfig.GatewayMaxConnectionsTotal,
+			ConnectionTimeout:     appConfig.GatewayConnectionTimeout,
+			IdleTimeout:           appConfig.GatewayIdleTimeout,
+			HeartbeatInterval:     appConfig.GatewayHeartbeatInterval,
+			ReadBufferSize:        4096,
+			WriteBufferSize:       4096,
+			EnableMetrics:         true,
+		}
+
+		// Configure authenticator based on config
+		var authenticator gateway.Authenticator
+		if appConfig.GatewayAuthHeader != "" {
+			authenticator = gateway.NewHeaderAuthenticator(appConfig.GatewayAuthHeader, false)
+		} else {
+			authenticator = gateway.NewNoopAuthenticator()
+		}
+
+		resolver := gateway.NewSessionManagerResolver(sessionManager)
+		streamGateway = gateway.New(gwConfig, authenticator, resolver)
+		streamGateway.Start()
+		defer streamGateway.Stop()
+		log.Printf("Streaming gateway enabled with max %d connections per user, %d total",
+			gwConfig.MaxConnectionsPerUser, gwConfig.MaxConnectionsTotal)
+	}
 
 	// Get the subdirectory from the embedded filesystem
 	distFS, err := fs.Sub(embeddedFiles, "web/dist")
@@ -92,7 +123,15 @@ func main() {
 	http.HandleFunc("/api/sessions/", handleSessionByID)
 
 	// WebSocket route for session VNC streams
-	http.Handle("/ws/sessions/", wsHandler)
+	// Use gateway if enabled, otherwise use legacy websocket handler
+	if streamGateway != nil {
+		http.Handle("/ws/sessions/", streamGateway)
+		// Also expose gateway metrics endpoint
+		http.HandleFunc("/api/gateway/metrics", handleGatewayMetrics(streamGateway))
+		http.HandleFunc("/api/gateway/connections", handleGatewayConnections(streamGateway))
+	} else {
+		http.Handle("/ws/sessions/", wsHandler)
+	}
 
 	// Serve apps.json from database (for frontend compatibility)
 	http.HandleFunc("/apps.json", handleAppsJSON)
@@ -564,5 +603,64 @@ func handleSessionByID(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleGatewayMetrics returns gateway metrics
+func handleGatewayMetrics(gw *gateway.Gateway) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		snapshot := gw.GetMetrics().Snapshot()
+
+		response := map[string]interface{}{
+			"total_connections":    snapshot.TotalConnections,
+			"active_connections":   snapshot.ActiveConnections,
+			"failed_connections":   snapshot.FailedConnections,
+			"total_bytes_sent":     snapshot.TotalBytesSent,
+			"total_bytes_recv":     snapshot.TotalBytesRecv,
+			"auth_failures":        snapshot.AuthFailures,
+			"rate_limit_hits":      snapshot.RateLimitHits,
+			"upstream_errors":      snapshot.UpstreamErrors,
+			"connections_per_user": snapshot.ConnectionsPerUser,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+	}
+}
+
+// handleGatewayConnections returns active gateway connections
+func handleGatewayConnections(gw *gateway.Gateway) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		conns := gw.ListConnections()
+		response := make([]map[string]interface{}, len(conns))
+
+		for i, conn := range conns {
+			snapshot := conn.Snapshot()
+			response[i] = map[string]interface{}{
+				"id":            snapshot.ID,
+				"session_id":    snapshot.SessionID,
+				"user_id":       snapshot.UserID,
+				"state":         snapshot.State,
+				"created_at":    snapshot.CreatedAt,
+				"connected_at":  snapshot.ConnectedAt,
+				"last_activity": snapshot.LastActivity,
+				"bytes_sent":    snapshot.BytesSent,
+				"bytes_recv":    snapshot.BytesRecv,
+				"remote_addr":   snapshot.RemoteAddr,
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
 	}
 }
