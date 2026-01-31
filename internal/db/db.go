@@ -94,8 +94,31 @@ func (db *DB) Close() error {
 	return db.conn.Close()
 }
 
-// migrate creates the necessary tables
+// migrate ensures the database schema is initialized
+// If schema_migrations table exists, assumes migrations are managed via 'make migrate-up'
+// Otherwise, runs legacy inline migration for backwards compatibility
 func (db *DB) migrate() error {
+	// Check if using new migration system
+	var count int
+	err := db.conn.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_migrations'").Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check for schema_migrations table: %w", err)
+	}
+
+	if count > 0 {
+		// New migration system in use - verify migrations have been applied
+		var migrationCount int
+		err := db.conn.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&migrationCount)
+		if err != nil {
+			return fmt.Errorf("failed to check applied migrations: %w", err)
+		}
+		if migrationCount == 0 {
+			return fmt.Errorf("schema_migrations table exists but no migrations applied - run 'make migrate-up'")
+		}
+		return nil
+	}
+
+	// Legacy inline migration for backwards compatibility
 	schema := `
 	CREATE TABLE IF NOT EXISTS applications (
 		id TEXT PRIMARY KEY,
@@ -141,20 +164,20 @@ func (db *DB) migrate() error {
 	CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 	CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
 	`
-	_, err := db.conn.Exec(schema)
+	_, err = db.conn.Exec(schema)
 	if err != nil {
 		return err
 	}
 
-	// Run migrations for existing databases (add new columns if they don't exist)
-	migrations := []string{
+	// Run column additions for existing databases (add new columns if they don't exist)
+	alterations := []string{
 		"ALTER TABLE applications ADD COLUMN launch_type TEXT NOT NULL DEFAULT 'url'",
 		"ALTER TABLE applications ADD COLUMN container_image TEXT DEFAULT ''",
 	}
 
-	for _, migration := range migrations {
+	for _, alteration := range alterations {
 		// Ignore errors - column may already exist
-		db.conn.Exec(migration)
+		db.conn.Exec(alteration)
 	}
 
 	return nil
