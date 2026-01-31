@@ -153,13 +153,27 @@ func (m *Manager) CreateSession(ctx context.Context, req *CreateSessionRequest) 
 	// Create session in database
 	now := time.Now()
 	session := &db.Session{
-		ID:        sessionID,
-		UserID:    req.UserID,
-		AppID:     req.AppID,
-		PodName:   createdPod.Name,
-		Status:    db.SessionStatusCreating,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:             sessionID,
+		UserID:         req.UserID,
+		AppID:          req.AppID,
+		PodName:        createdPod.Name,
+		Status:         db.SessionStatusCreating,
+		TTL:            req.TTL,
+		IdleTimeout:    req.IdleTimeout,
+		LastActivityAt: now,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	// Compute expiration time if TTL is set
+	if req.TTL > 0 {
+		expiresAt := now.Add(time.Duration(req.TTL) * time.Second)
+		session.ExpiresAt = &expiresAt
+	}
+
+	// Use default idle timeout if not specified but system has a default
+	if session.IdleTimeout == 0 {
+		session.IdleTimeout = int64(m.sessionTimeout.Seconds())
 	}
 
 	if err := m.db.CreateSession(*session); err != nil {
@@ -287,6 +301,133 @@ func (m *Manager) TerminateSession(ctx context.Context, sessionID string) error 
 	m.mu.Unlock()
 
 	log.Printf("Session %s terminated (pod: %s)", sessionID, session.PodName)
+	return nil
+}
+
+// StopSession stops a running session without deleting the pod
+// This pauses the session, allowing it to be restarted later
+func (m *Manager) StopSession(ctx context.Context, sessionID string) error {
+	session, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if session == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	if session.Status != db.SessionStatusRunning {
+		return fmt.Errorf("session %s is not running (status: %s)", sessionID, session.Status)
+	}
+
+	// Update status to stopped
+	if err := m.db.UpdateSessionStatus(sessionID, db.SessionStatusStopped); err != nil {
+		return fmt.Errorf("failed to update session status: %w", err)
+	}
+
+	// Update cache
+	m.mu.Lock()
+	if s, ok := m.sessions[sessionID]; ok {
+		s.Status = db.SessionStatusStopped
+	}
+	m.mu.Unlock()
+
+	log.Printf("Session %s stopped (pod: %s)", sessionID, session.PodName)
+	return nil
+}
+
+// StartSession starts a stopped session
+func (m *Manager) StartSession(ctx context.Context, sessionID string) error {
+	session, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if session == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	if session.Status != db.SessionStatusStopped {
+		return fmt.Errorf("session %s is not stopped (status: %s)", sessionID, session.Status)
+	}
+
+	// Update status to running
+	if err := m.db.UpdateSessionStatus(sessionID, db.SessionStatusRunning); err != nil {
+		return fmt.Errorf("failed to update session status: %w", err)
+	}
+
+	// Update last activity timestamp
+	if err := m.db.UpdateSessionActivity(sessionID); err != nil {
+		log.Printf("Warning: failed to update activity for session %s: %v", sessionID, err)
+	}
+
+	// Update cache
+	m.mu.Lock()
+	if s, ok := m.sessions[sessionID]; ok {
+		s.Status = db.SessionStatusRunning
+		s.LastActivityAt = time.Now()
+	}
+	m.mu.Unlock()
+
+	log.Printf("Session %s started (pod: %s)", sessionID, session.PodName)
+	return nil
+}
+
+// RestartSession restarts a session by stopping and starting it
+func (m *Manager) RestartSession(ctx context.Context, sessionID string) error {
+	session, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if session == nil {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	// Only running or stopped sessions can be restarted
+	if session.Status != db.SessionStatusRunning && session.Status != db.SessionStatusStopped {
+		return fmt.Errorf("session %s cannot be restarted (status: %s)", sessionID, session.Status)
+	}
+
+	// If running, stop it first
+	if session.Status == db.SessionStatusRunning {
+		if err := m.db.UpdateSessionStatus(sessionID, db.SessionStatusStopped); err != nil {
+			return fmt.Errorf("failed to stop session: %w", err)
+		}
+	}
+
+	// Start the session
+	if err := m.db.UpdateSessionStatus(sessionID, db.SessionStatusRunning); err != nil {
+		return fmt.Errorf("failed to start session: %w", err)
+	}
+
+	// Update last activity timestamp
+	if err := m.db.UpdateSessionActivity(sessionID); err != nil {
+		log.Printf("Warning: failed to update activity for session %s: %v", sessionID, err)
+	}
+
+	// Update cache
+	m.mu.Lock()
+	if s, ok := m.sessions[sessionID]; ok {
+		s.Status = db.SessionStatusRunning
+		s.LastActivityAt = time.Now()
+	}
+	m.mu.Unlock()
+
+	log.Printf("Session %s restarted (pod: %s)", sessionID, session.PodName)
+	return nil
+}
+
+// UpdateActivity updates the last activity timestamp for a session
+func (m *Manager) UpdateActivity(ctx context.Context, sessionID string) error {
+	if err := m.db.UpdateSessionActivity(sessionID); err != nil {
+		return fmt.Errorf("failed to update activity: %w", err)
+	}
+
+	// Update cache
+	m.mu.Lock()
+	if s, ok := m.sessions[sessionID]; ok {
+		s.LastActivityAt = time.Now()
+	}
+	m.mu.Unlock()
+
 	return nil
 }
 

@@ -501,11 +501,26 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSessionByID handles GET and DELETE for /api/sessions/{id}
+// and POST for /api/sessions/{id}/start, /api/sessions/{id}/stop, /api/sessions/{id}/restart
 func handleSessionByID(w http.ResponseWriter, r *http.Request) {
-	// Extract ID from path
-	id := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
-	if id == "" {
+	// Extract path after /api/sessions/
+	path := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	if path == "" {
 		http.Error(w, "Missing session ID", http.StatusBadRequest)
+		return
+	}
+
+	// Check for action paths (e.g., {id}/start, {id}/stop, {id}/restart)
+	parts := strings.SplitN(path, "/", 2)
+	id := parts[0]
+	action := ""
+	if len(parts) > 1 {
+		action = parts[1]
+	}
+
+	// Handle action endpoints
+	if action != "" {
+		handleSessionAction(w, r, id, action)
 		return
 	}
 
@@ -561,4 +576,72 @@ func handleSessionByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleSessionAction handles POST requests for session lifecycle actions
+func handleSessionAction(w http.ResponseWriter, r *http.Request, sessionID, action string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	session, err := sessionManager.GetSession(r.Context(), sessionID)
+	if err != nil {
+		log.Printf("Error getting session: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	if session == nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	var actionErr error
+	var auditAction string
+
+	switch action {
+	case "start":
+		actionErr = sessionManager.StartSession(r.Context(), sessionID)
+		auditAction = "START_SESSION"
+	case "stop":
+		actionErr = sessionManager.StopSession(r.Context(), sessionID)
+		auditAction = "STOP_SESSION"
+	case "restart":
+		actionErr = sessionManager.RestartSession(r.Context(), sessionID)
+		auditAction = "RESTART_SESSION"
+	default:
+		http.Error(w, "Unknown action: "+action, http.StatusBadRequest)
+		return
+	}
+
+	if actionErr != nil {
+		log.Printf("Error performing %s on session %s: %v", action, sessionID, actionErr)
+		http.Error(w, actionErr.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Log the action
+	actionTitle := strings.ToUpper(action[:1]) + action[1:]
+	details := fmt.Sprintf("%s session %s", actionTitle, sessionID)
+	database.LogAudit("admin", auditAction, details)
+
+	// Return updated session
+	session, err = sessionManager.GetSession(r.Context(), sessionID)
+	if err != nil {
+		log.Printf("Error getting updated session: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Get app name for response
+	app, _ := database.GetApp(session.AppID)
+	appName := ""
+	if app != nil {
+		appName = app.Name
+	}
+
+	response := sessions.SessionFromDB(session, appName, sessionManager.GetSessionWebSocketURL(session))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
