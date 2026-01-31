@@ -35,6 +35,10 @@ type Config struct {
 	SessionTimeout         time.Duration
 	SessionCleanupInterval time.Duration
 	PodReadyTimeout        time.Duration
+
+	// Autoscaling/backpressure configuration
+	MaxConcurrentSessions int // Max concurrent pod creations
+	MaxQueuedSessions     int // Max sessions waiting in queue (0 = no queueing)
 }
 
 // ValidationError represents a configuration validation error.
@@ -74,6 +78,10 @@ const (
 	DefaultSessionTimeout         = 2 * time.Hour
 	DefaultSessionCleanupInterval = 5 * time.Minute
 	DefaultPodReadyTimeout        = 2 * time.Minute
+
+	// Autoscaling defaults
+	DefaultMaxConcurrentSessions = 10 // Max concurrent pod creations
+	DefaultMaxQueuedSessions     = 50 // Max sessions waiting in queue
 )
 
 // Load reads configuration from environment variables and returns a Config.
@@ -99,6 +107,10 @@ func Load() (*Config, error) {
 		SessionTimeout:         DefaultSessionTimeout,
 		SessionCleanupInterval: DefaultSessionCleanupInterval,
 		PodReadyTimeout:        DefaultPodReadyTimeout,
+
+		// Autoscaling defaults
+		MaxConcurrentSessions: DefaultMaxConcurrentSessions,
+		MaxQueuedSessions:     DefaultMaxQueuedSessions,
 	}
 
 	// Load from environment variables
@@ -222,6 +234,41 @@ func (c *Config) loadFromEnv() error {
 			})
 		} else {
 			c.PodReadyTimeout = time.Duration(seconds) * time.Second
+		}
+	}
+
+	// Autoscaling configuration
+	if v := os.Getenv("LAUNCHPAD_MAX_CONCURRENT_SESSIONS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_MAX_CONCURRENT_SESSIONS",
+				Message: fmt.Sprintf("invalid value: %q (must be a positive integer)", v),
+			})
+		} else if n <= 0 {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_MAX_CONCURRENT_SESSIONS",
+				Message: fmt.Sprintf("value must be positive: %d", n),
+			})
+		} else {
+			c.MaxConcurrentSessions = n
+		}
+	}
+
+	if v := os.Getenv("LAUNCHPAD_MAX_QUEUED_SESSIONS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_MAX_QUEUED_SESSIONS",
+				Message: fmt.Sprintf("invalid value: %q (must be a non-negative integer)", v),
+			})
+		} else if n < 0 {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_MAX_QUEUED_SESSIONS",
+				Message: fmt.Sprintf("value must be non-negative: %d", n),
+			})
+		} else {
+			c.MaxQueuedSessions = n
 		}
 	}
 

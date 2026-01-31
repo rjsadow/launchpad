@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,7 +29,20 @@ type ManagerConfig struct {
 	SessionTimeout  time.Duration
 	CleanupInterval time.Duration
 	PodReadyTimeout time.Duration
+
+	// Autoscaling/backpressure configuration
+	MaxConcurrentSessions int // Max concurrent pod creations (default: 10)
+	MaxQueuedSessions     int // Max sessions waiting in queue (default: 50, 0 = no queueing)
 }
+
+// Default autoscaling values
+const (
+	DefaultMaxConcurrentSessions = 10
+	DefaultMaxQueuedSessions     = 50
+)
+
+// ErrTooManyRequests is returned when the session queue is full (backpressure)
+var ErrTooManyRequests = fmt.Errorf("too many session requests: server at capacity")
 
 // Manager handles session lifecycle
 type Manager struct {
@@ -36,6 +50,12 @@ type Manager struct {
 	sessionTimeout  time.Duration
 	cleanupInterval time.Duration
 	podReadyTimeout time.Duration
+
+	// Autoscaling/backpressure
+	maxConcurrent int
+	maxQueued     int
+	semaphore     chan struct{} // Limits concurrent pod creations
+	queuedCount   int32         // Atomic counter for queued requests
 
 	mu       sync.RWMutex
 	stopCh   chan struct{}
@@ -64,12 +84,21 @@ func NewManagerWithConfig(database *db.DB, cfg ManagerConfig) *Manager {
 	if cfg.PodReadyTimeout == 0 {
 		cfg.PodReadyTimeout = DefaultPodReadyTimeout
 	}
+	if cfg.MaxConcurrentSessions == 0 {
+		cfg.MaxConcurrentSessions = DefaultMaxConcurrentSessions
+	}
+	if cfg.MaxQueuedSessions == 0 {
+		cfg.MaxQueuedSessions = DefaultMaxQueuedSessions
+	}
 
 	return &Manager{
 		db:              database,
 		sessionTimeout:  cfg.SessionTimeout,
 		cleanupInterval: cfg.CleanupInterval,
 		podReadyTimeout: cfg.PodReadyTimeout,
+		maxConcurrent:   cfg.MaxConcurrentSessions,
+		maxQueued:       cfg.MaxQueuedSessions,
+		semaphore:       make(chan struct{}, cfg.MaxConcurrentSessions),
 		stopCh:          make(chan struct{}),
 		sessions:        make(map[string]*db.Session),
 	}
@@ -120,8 +149,27 @@ func (m *Manager) cleanupStaleSessions() error {
 	return nil
 }
 
-// CreateSession creates a new session for an application
+// CreateSession creates a new session for an application.
+// Implements backpressure: returns ErrTooManyRequests if the server is at capacity.
 func (m *Manager) CreateSession(ctx context.Context, req *CreateSessionRequest) (*db.Session, error) {
+	// Check backpressure: if queue is full, reject immediately
+	currentQueued := atomic.LoadInt32(&m.queuedCount)
+	if int(currentQueued) >= m.maxQueued {
+		return nil, ErrTooManyRequests
+	}
+
+	// Increment queued count
+	atomic.AddInt32(&m.queuedCount, 1)
+	defer atomic.AddInt32(&m.queuedCount, -1)
+
+	// Acquire semaphore slot (blocks if at max concurrent)
+	select {
+	case m.semaphore <- struct{}{}:
+		defer func() { <-m.semaphore }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
 	// Get the application
 	app, err := m.db.GetApp(req.AppID)
 	if err != nil {
@@ -177,6 +225,11 @@ func (m *Manager) CreateSession(ctx context.Context, req *CreateSessionRequest) 
 	go m.waitForPodReady(sessionID, createdPod.Name)
 
 	return session, nil
+}
+
+// QueueStats returns current queue statistics for monitoring
+func (m *Manager) QueueStats() (currentQueued int, maxQueued int, maxConcurrent int) {
+	return int(atomic.LoadInt32(&m.queuedCount)), m.maxQueued, m.maxConcurrent
 }
 
 // waitForPodReady waits for the pod to be ready and updates the session

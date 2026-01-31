@@ -59,9 +59,11 @@ func main() {
 
 	// Initialize session manager with config
 	sessionManager = sessions.NewManagerWithConfig(database, sessions.ManagerConfig{
-		SessionTimeout:  appConfig.SessionTimeout,
-		CleanupInterval: appConfig.SessionCleanupInterval,
-		PodReadyTimeout: appConfig.PodReadyTimeout,
+		SessionTimeout:        appConfig.SessionTimeout,
+		CleanupInterval:       appConfig.SessionCleanupInterval,
+		PodReadyTimeout:       appConfig.PodReadyTimeout,
+		MaxConcurrentSessions: appConfig.MaxConcurrentSessions,
+		MaxQueuedSessions:     appConfig.MaxQueuedSessions,
 	})
 	sessionManager.Start()
 	defer sessionManager.Stop()
@@ -474,6 +476,11 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 		session, err := sessionManager.CreateSession(r.Context(), &req)
 		if err != nil {
 			log.Printf("Error creating session: %v", err)
+			// Return 429 Too Many Requests for backpressure
+			if err == sessions.ErrTooManyRequests {
+				http.Error(w, err.Error(), http.StatusTooManyRequests)
+				return
+			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
