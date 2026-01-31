@@ -267,7 +267,7 @@ curl -i -N \
   -H "Connection: Upgrade" \
   -H "Upgrade: websocket" \
   -H "Sec-WebSocket-Version: 13" \
-  -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+  -H "Sec-WebSocket-Key: $(openssl rand -base64 16)" \
   https://launchpad.example.com/ws/sessions/test
 ```
 
@@ -275,12 +275,12 @@ curl -i -N \
 
 ### Route Summary
 
-| Path Pattern | Backend | Notes |
-|--------------|---------|-------|
-| `/api/*` | Launchpad | REST API endpoints |
-| `/ws/*` | Launchpad | WebSocket (VNC streams) |
-| `/` | Launchpad | Frontend static files |
-| `/*.js, *.css, etc.` | Launchpad | Cached static assets |
+| Path Pattern         | Backend   | Notes                  |
+|----------------------|-----------|------------------------|
+| `/api/*`             | Launchpad | REST API endpoints     |
+| `/ws/*`              | Launchpad | WebSocket (VNC streams)|
+| `/`                  | Launchpad | Frontend static files  |
+| `/*.js, *.css, etc.` | Launchpad | Cached static assets   |
 
 ### Multi-Backend Example
 
@@ -332,15 +332,15 @@ proxy_set_header X-Forwarded-Port $server_port;
 
 ### Security Headers Reference
 
-| Header | Value | Purpose |
-|--------|-------|---------|
-| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains` | Force HTTPS |
-| `X-Frame-Options` | `SAMEORIGIN` | Prevent clickjacking |
-| `X-Content-Type-Options` | `nosniff` | Prevent MIME sniffing |
-| `X-XSS-Protection` | `1; mode=block` | XSS filter |
-| `Referrer-Policy` | `strict-origin-when-cross-origin` | Control referrer |
-| `Permissions-Policy` | `geolocation=(), ...` | Disable browser features |
-| `Content-Security-Policy` | See config | Control resource loading |
+| Header                      | Value                                 | Purpose                 |
+|-----------------------------|---------------------------------------|-------------------------|
+| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains` | Force HTTPS             |
+| `X-Frame-Options`           | `SAMEORIGIN`                          | Prevent clickjacking    |
+| `X-Content-Type-Options`    | `nosniff`                             | Prevent MIME sniffing   |
+| `X-XSS-Protection`          | `1; mode=block`                       | XSS filter              |
+| `Referrer-Policy`           | `strict-origin-when-cross-origin`     | Control referrer        |
+| `Permissions-Policy`        | `geolocation=(), ...`                 | Disable browser features|
+| `Content-Security-Policy`   | See config                            | Control resource loading|
 
 ### Custom Headers for Debugging
 
@@ -436,20 +436,24 @@ Should return `101 Switching Protocols` (when session exists).
 
 ### Common Issues
 
-**502 Bad Gateway**
+#### 502 Bad Gateway
+
 - Backend not running: `systemctl status launchpad`
 - Firewall blocking: `sudo ufw status`
 - Wrong upstream address: Check `proxy_pass` directive
 
-**WebSocket disconnects**
+#### WebSocket disconnects
+
 - Timeout too short: Increase `proxy_read_timeout`
 - Load balancer in path: Ensure sticky sessions or direct connection
 
-**Mixed content warnings**
+#### Mixed content warnings
+
 - Missing `X-Forwarded-Proto`: Add header in proxy config
 - Hardcoded HTTP URLs: Check application configuration
 
-**Certificate errors**
+#### Certificate errors
+
 - Wrong domain: Verify `server_name` matches certificate
 - Expired certificate: Run `certbot renew`
 - Missing chain: Include intermediate certificates
