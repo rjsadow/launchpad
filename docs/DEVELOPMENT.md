@@ -26,13 +26,13 @@ This starts both the backend and frontend servers with a single command.
 
 ## Port Reference
 
-| Service  | Port | URL                     | Description                    |
-|----------|------|-------------------------|--------------------------------|
-| Frontend | 5173 | http://localhost:5173   | Vite dev server with HMR       |
-| Backend  | 8080 | http://localhost:8080   | Go API server                  |
-| Database | -    | `./launchpad.db`        | SQLite file (created on start) |
+| Service  | Port | URL                       | Description                    |
+|----------|------|---------------------------|--------------------------------|
+| Frontend | 5173 | `http://localhost:5173`   | Vite dev server with HMR       |
+| Backend  | 8080 | `http://localhost:8080`   | Go API server                  |
+| Database | -    | `./launchpad.db`          | SQLite file (created on start) |
 
-**Use http://localhost:5173** for development. The Vite dev server proxies
+**Use `http://localhost:5173`** for development. The Vite dev server proxies
 API requests (`/api/*`, `/ws/*`, `/apps.json`) to the backend automatically.
 
 ## Development Commands
