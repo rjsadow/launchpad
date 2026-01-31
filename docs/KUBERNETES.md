@@ -88,7 +88,8 @@ Add applications with `launch_type: "container"` to your apps.json:
       "icon": "https://example.com/firefox.png",
       "category": "Browsers",
       "launch_type": "container",
-      "container_image": "ghcr.io/yourorg/firefox-desktop:latest"
+      "container_image": "ghcr.io/yourorg/firefox-desktop:latest",
+      "allowed_hosts": ["*.mozilla.org", "*.firefox.com"]
     },
     {
       "id": "vscode",
@@ -98,11 +99,15 @@ Add applications with `launch_type: "container"` to your apps.json:
       "icon": "https://example.com/vscode.png",
       "category": "Development",
       "launch_type": "container",
-      "container_image": "codercom/code-server:latest"
+      "container_image": "codercom/code-server:latest",
+      "allowed_hosts": ["github.com", "api.github.com", "*.npmjs.org"]
     }
   ]
 }
 ```
+
+The `allowed_hosts` field controls which external hosts the container can
+access. See [Network Egress Rules](#network-egress-rules) for details.
 
 ### Building Application Images
 
@@ -200,6 +205,112 @@ The WebSocket connection proxies the noVNC/websockify protocol.
    the namespace
 4. **Pod Security**: Pods run as non-root with dropped capabilities
 5. **Session Timeout**: Stale sessions are automatically cleaned up
+6. **Network Egress Control**: Per-application egress rules (see below)
+
+## Network Egress Rules
+
+Launchpad supports configuring network egress rules per application using the
+`allowed_hosts` field. This allows administrators to control which external
+hosts container applications can access.
+
+### Configuration
+
+Add `allowed_hosts` to your application configuration:
+
+```json
+{
+  "applications": [
+    {
+      "id": "secure-browser",
+      "name": "Secure Browser",
+      "description": "Browser with restricted network access",
+      "launch_type": "container",
+      "container_image": "ghcr.io/yourorg/browser:latest",
+      "allowed_hosts": [
+        "api.example.com",
+        "cdn.example.com"
+      ]
+    },
+    {
+      "id": "isolated-app",
+      "name": "Isolated App",
+      "description": "App with no external network access",
+      "launch_type": "container",
+      "container_image": "ghcr.io/yourorg/isolated:latest",
+      "allowed_hosts": []
+    }
+  ]
+}
+```
+
+### Behavior
+
+| `allowed_hosts` Value | Egress Behavior |
+|-----------------------|-----------------|
+| Empty list `[]` | Only DNS allowed; no HTTP/HTTPS egress |
+| Non-empty list | DNS + HTTP/HTTPS on ports 80, 443 allowed |
+| Field omitted | Same as empty list (deny by default) |
+
+### Implementation Details
+
+When a session is created, Launchpad generates a Kubernetes NetworkPolicy
+for that session pod:
+
+- **DNS**: Always allowed (UDP/TCP port 53 to kube-dns)
+- **HTTP/HTTPS**: Only allowed if `allowed_hosts` is non-empty
+
+### Limitations
+
+Standard Kubernetes NetworkPolicy does not support hostname-based rules.
+The `allowed_hosts` field documents intended access and enables port-based
+egress, but **hostname enforcement requires a DNS-aware CNI** like:
+
+- [Cilium](https://cilium.io/) with DNS-aware Network Policies
+- [Calico](https://www.tigera.io/project-calico/) with DNS Policy
+
+For strict hostname enforcement, consider deploying Cilium and using its
+`CiliumNetworkPolicy` with `toFQDNs` rules.
+
+### Example NetworkPolicy Generated
+
+For an app with `allowed_hosts: ["api.example.com"]`:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: launchpad-session-<session-id>
+  labels:
+    launchpad.io/session-id: <session-id>
+    launchpad.io/app-id: <app-id>
+spec:
+  podSelector:
+    matchLabels:
+      launchpad.io/session-id: <session-id>
+  policyTypes:
+    - Egress
+  egress:
+    # DNS allowed
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # HTTP/HTTPS allowed (hostname enforcement requires Cilium)
+    - ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+```
+
+For an app with `allowed_hosts: []` (empty), the HTTP/HTTPS egress rule is
+omitted, effectively blocking all external network access except DNS.
 
 ## Troubleshooting
 

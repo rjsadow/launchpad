@@ -1,6 +1,15 @@
 ---
-# NetworkPolicy for session pod isolation
-# Session pods can only communicate with the launchpad server
+# NetworkPolicy for session pod isolation (default/fallback policy)
+#
+# NOTE: Launchpad creates per-session NetworkPolicies dynamically based on
+# each application's `allowed_hosts` configuration. This static policy serves
+# as a fallback/baseline for INGRESS rules only.
+#
+# Egress is controlled per-session via dynamically generated NetworkPolicies:
+# - Apps with allowed_hosts=[] get DNS-only egress
+# - Apps with allowed_hosts=["..."] get DNS + HTTP/HTTPS egress
+#
+# See docs/KUBERNETES.md for Network Egress Rules documentation.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -14,7 +23,6 @@ spec:
       app.kubernetes.io/component: session
   policyTypes:
     - Ingress
-    - Egress
   ingress:
     # Allow incoming traffic from the launchpad server on WebSocket port
     - from:
@@ -27,27 +35,6 @@ spec:
           port: 6080  # websockify port
         - protocol: TCP
           port: 5900  # VNC port
-  egress:
-    # Allow DNS lookups
-    - to:
-        - namespaceSelector: {}
-          podSelector:
-            matchLabels:
-              k8s-app: kube-dns
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
-    # Allow outbound HTTPS for app requirements (can be restricted further)
-    - to:
-        - ipBlock:
-            cidr: 0.0.0.0/0
-      ports:
-        - protocol: TCP
-          port: 443
-        - protocol: TCP
-          port: 80
 
 ---
 # NetworkPolicy for the launchpad server

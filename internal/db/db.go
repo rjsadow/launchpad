@@ -28,6 +28,11 @@ type Application struct {
 	Category       string     `json:"category"`
 	LaunchType     LaunchType `json:"launch_type"`
 	ContainerImage string     `json:"container_image,omitempty"`
+	// AllowedHosts specifies which external hosts this container app can access.
+	// Used to generate NetworkPolicy egress rules for session pods.
+	// Empty list means no external network access (except DNS).
+	// Example: ["api.example.com", "*.github.com"]
+	AllowedHosts []string `json:"allowed_hosts,omitempty"`
 }
 
 // AppConfig is the JSON structure for apps.json
@@ -111,7 +116,8 @@ func (db *DB) migrate() error {
 		icon TEXT NOT NULL,
 		category TEXT NOT NULL,
 		launch_type TEXT NOT NULL DEFAULT 'url',
-		container_image TEXT DEFAULT ''
+		container_image TEXT DEFAULT '',
+		allowed_hosts TEXT DEFAULT '[]'
 	);
 
 	CREATE TABLE IF NOT EXISTS audit_log (
@@ -156,6 +162,7 @@ func (db *DB) migrate() error {
 	migrations := []string{
 		"ALTER TABLE applications ADD COLUMN launch_type TEXT NOT NULL DEFAULT 'url'",
 		"ALTER TABLE applications ADD COLUMN container_image TEXT DEFAULT ''",
+		"ALTER TABLE applications ADD COLUMN allowed_hosts TEXT DEFAULT '[]'",
 	}
 
 	for _, migration := range migrations {
@@ -202,7 +209,7 @@ func (db *DB) SeedFromJSON(jsonPath string) error {
 
 // ListApps returns all applications
 func (db *DB) ListApps() ([]Application, error) {
-	rows, err := db.conn.Query("SELECT id, name, description, url, icon, category, launch_type, container_image FROM applications ORDER BY category, name")
+	rows, err := db.conn.Query("SELECT id, name, description, url, icon, category, launch_type, container_image, allowed_hosts FROM applications ORDER BY category, name")
 	if err != nil {
 		return nil, err
 	}
@@ -211,8 +218,8 @@ func (db *DB) ListApps() ([]Application, error) {
 	var apps []Application
 	for rows.Next() {
 		var app Application
-		var launchType, containerImage string
-		if err := rows.Scan(&app.ID, &app.Name, &app.Description, &app.URL, &app.Icon, &app.Category, &launchType, &containerImage); err != nil {
+		var launchType, containerImage, allowedHostsJSON string
+		if err := rows.Scan(&app.ID, &app.Name, &app.Description, &app.URL, &app.Icon, &app.Category, &launchType, &containerImage, &allowedHostsJSON); err != nil {
 			return nil, err
 		}
 		app.LaunchType = LaunchType(launchType)
@@ -220,6 +227,9 @@ func (db *DB) ListApps() ([]Application, error) {
 			app.LaunchType = LaunchTypeURL
 		}
 		app.ContainerImage = containerImage
+		if allowedHostsJSON != "" && allowedHostsJSON != "[]" {
+			json.Unmarshal([]byte(allowedHostsJSON), &app.AllowedHosts)
+		}
 		apps = append(apps, app)
 	}
 
@@ -229,11 +239,11 @@ func (db *DB) ListApps() ([]Application, error) {
 // GetApp returns a single application by ID
 func (db *DB) GetApp(id string) (*Application, error) {
 	var app Application
-	var launchType, containerImage string
+	var launchType, containerImage, allowedHostsJSON string
 	err := db.conn.QueryRow(
-		"SELECT id, name, description, url, icon, category, launch_type, container_image FROM applications WHERE id = ?",
+		"SELECT id, name, description, url, icon, category, launch_type, container_image, allowed_hosts FROM applications WHERE id = ?",
 		id,
-	).Scan(&app.ID, &app.Name, &app.Description, &app.URL, &app.Icon, &app.Category, &launchType, &containerImage)
+	).Scan(&app.ID, &app.Name, &app.Description, &app.URL, &app.Icon, &app.Category, &launchType, &containerImage, &allowedHostsJSON)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -246,6 +256,9 @@ func (db *DB) GetApp(id string) (*Application, error) {
 		app.LaunchType = LaunchTypeURL
 	}
 	app.ContainerImage = containerImage
+	if allowedHostsJSON != "" && allowedHostsJSON != "[]" {
+		json.Unmarshal([]byte(allowedHostsJSON), &app.AllowedHosts)
+	}
 	return &app, nil
 }
 
@@ -255,9 +268,15 @@ func (db *DB) CreateApp(app Application) error {
 	if launchType == "" {
 		launchType = string(LaunchTypeURL)
 	}
+	allowedHostsJSON := "[]"
+	if len(app.AllowedHosts) > 0 {
+		if data, err := json.Marshal(app.AllowedHosts); err == nil {
+			allowedHostsJSON = string(data)
+		}
+	}
 	_, err := db.conn.Exec(
-		"INSERT INTO applications (id, name, description, url, icon, category, launch_type, container_image) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		app.ID, app.Name, app.Description, app.URL, app.Icon, app.Category, launchType, app.ContainerImage,
+		"INSERT INTO applications (id, name, description, url, icon, category, launch_type, container_image, allowed_hosts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		app.ID, app.Name, app.Description, app.URL, app.Icon, app.Category, launchType, app.ContainerImage, allowedHostsJSON,
 	)
 	return err
 }
@@ -268,9 +287,15 @@ func (db *DB) UpdateApp(app Application) error {
 	if launchType == "" {
 		launchType = string(LaunchTypeURL)
 	}
+	allowedHostsJSON := "[]"
+	if len(app.AllowedHosts) > 0 {
+		if data, err := json.Marshal(app.AllowedHosts); err == nil {
+			allowedHostsJSON = string(data)
+		}
+	}
 	result, err := db.conn.Exec(
-		"UPDATE applications SET name = ?, description = ?, url = ?, icon = ?, category = ?, launch_type = ?, container_image = ? WHERE id = ?",
-		app.Name, app.Description, app.URL, app.Icon, app.Category, launchType, app.ContainerImage, app.ID,
+		"UPDATE applications SET name = ?, description = ?, url = ?, icon = ?, category = ?, launch_type = ?, container_image = ?, allowed_hosts = ? WHERE id = ?",
+		app.Name, app.Description, app.URL, app.Icon, app.Category, launchType, app.ContainerImage, allowedHostsJSON, app.ID,
 	)
 	if err != nil {
 		return err

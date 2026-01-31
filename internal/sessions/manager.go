@@ -150,6 +150,18 @@ func (m *Manager) CreateSession(ctx context.Context, req *CreateSessionRequest) 
 		return nil, fmt.Errorf("failed to create pod: %w", err)
 	}
 
+	// Create NetworkPolicy for the session based on app's allowed hosts
+	npConfig := &k8s.NetworkPolicyConfig{
+		SessionID:    sessionID,
+		AppID:        app.ID,
+		AllowedHosts: app.AllowedHosts,
+	}
+	np := k8s.BuildNetworkPolicy(npConfig)
+	if _, err := k8s.CreateNetworkPolicy(ctx, np); err != nil {
+		log.Printf("Warning: failed to create NetworkPolicy for session %s: %v", sessionID, err)
+		// Don't fail session creation if NetworkPolicy fails - log and continue
+	}
+
 	// Create session in database
 	now := time.Now()
 	session := &db.Session{
@@ -289,6 +301,11 @@ func (m *Manager) terminateWithStatus(ctx context.Context, sessionID string, fin
 	// Delete the pod
 	if err := k8s.DeletePod(ctx, session.PodName); err != nil {
 		log.Printf("Warning: failed to delete pod %s: %v", session.PodName, err)
+	}
+
+	// Delete the NetworkPolicy for this session
+	if err := k8s.DeleteSessionNetworkPolicy(ctx, sessionID); err != nil {
+		log.Printf("Warning: failed to delete NetworkPolicy for session %s: %v", sessionID, err)
 	}
 
 	// Update status to final state
