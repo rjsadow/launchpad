@@ -5,22 +5,14 @@ and some ESLint rules.
 
 Currently, two official plugins are available:
 
-- [@vitejs/plugin-react][plugin-react] uses [Babel](https://babeljs.io/)
-  (or [oxc](https://oxc.rs) when used in [rolldown-vite][rolldown]) for
-  Fast Refresh
-- [@vitejs/plugin-react-swc][plugin-react-swc] uses [SWC](https://swc.rs/)
-  for Fast Refresh
-
-[plugin-react]: https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react
-[plugin-react-swc]: https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc
-[rolldown]: https://vite.dev/guide/rolldown
+- [@vitejs/plugin-react][plugin-react] uses [Babel][babel] (or [oxc][oxc] when
+  used in [rolldown-vite][rolldown]) for Fast Refresh
+- [@vitejs/plugin-react-swc][plugin-react-swc] uses [SWC][swc] for Fast Refresh
 
 ## React Compiler
 
 The React Compiler is not enabled on this template because of its impact on
-dev & build performances. To add it, see [this documentation][react-compiler].
-
-[react-compiler]: https://react.dev/learn/react-compiler/installation
+dev & build performances. To add it, see [this documentation][compiler-docs].
 
 ## Expanding the ESLint configuration
 
@@ -58,9 +50,6 @@ export default defineConfig([
 You can also install [eslint-plugin-react-x][react-x] and
 [eslint-plugin-react-dom][react-dom] for React-specific lint rules:
 
-[react-x]: https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x
-[react-dom]: https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom
-
 ```js
 // eslint.config.js
 import reactX from 'eslint-plugin-react-x'
@@ -87,3 +76,14 @@ export default defineConfig([
   },
 ])
 ```
+
+<!-- Reference links -->
+[plugin-react]: https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react
+[plugin-react-swc]: https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc
+[babel]: https://babeljs.io/
+[oxc]: https://oxc.rs
+[rolldown]: https://vite.dev/guide/rolldown
+[swc]: https://swc.rs/
+[compiler-docs]: https://react.dev/learn/react-compiler/installation
+[react-x]: https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x
+[react-dom]: https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom
