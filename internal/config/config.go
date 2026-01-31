@@ -35,6 +35,13 @@ type Config struct {
 	SessionTimeout         time.Duration
 	SessionCleanupInterval time.Duration
 	PodReadyTimeout        time.Duration
+
+	// Authentication configuration
+	JWTSecret        string
+	TokenExpiry      time.Duration
+	AuthEnabled      bool
+	DefaultAdminUser string
+	DefaultAdminPass string
 }
 
 // ValidationError represents a configuration validation error.
@@ -74,6 +81,8 @@ const (
 	DefaultSessionTimeout         = 2 * time.Hour
 	DefaultSessionCleanupInterval = 5 * time.Minute
 	DefaultPodReadyTimeout        = 2 * time.Minute
+	DefaultTokenExpiry            = 24 * time.Hour
+	DefaultAuthEnabled            = false
 )
 
 // Load reads configuration from environment variables and returns a Config.
@@ -99,6 +108,10 @@ func Load() (*Config, error) {
 		SessionTimeout:         DefaultSessionTimeout,
 		SessionCleanupInterval: DefaultSessionCleanupInterval,
 		PodReadyTimeout:        DefaultPodReadyTimeout,
+
+		// Auth defaults
+		TokenExpiry: DefaultTokenExpiry,
+		AuthEnabled: DefaultAuthEnabled,
 	}
 
 	// Load from environment variables
@@ -225,6 +238,40 @@ func (c *Config) loadFromEnv() error {
 		}
 	}
 
+	// Authentication configuration
+	if v := os.Getenv("LAUNCHPAD_JWT_SECRET"); v != "" {
+		c.JWTSecret = v
+	}
+
+	if v := os.Getenv("LAUNCHPAD_TOKEN_EXPIRY"); v != "" {
+		hours, err := strconv.Atoi(v)
+		if err != nil {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_TOKEN_EXPIRY",
+				Message: fmt.Sprintf("invalid expiry: %q (must be an integer representing hours)", v),
+			})
+		} else if hours <= 0 {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_TOKEN_EXPIRY",
+				Message: fmt.Sprintf("expiry must be positive: %d", hours),
+			})
+		} else {
+			c.TokenExpiry = time.Duration(hours) * time.Hour
+		}
+	}
+
+	if v := os.Getenv("LAUNCHPAD_AUTH_ENABLED"); v != "" {
+		c.AuthEnabled = v == "true" || v == "1" || v == "yes"
+	}
+
+	if v := os.Getenv("LAUNCHPAD_DEFAULT_ADMIN_USER"); v != "" {
+		c.DefaultAdminUser = v
+	}
+
+	if v := os.Getenv("LAUNCHPAD_DEFAULT_ADMIN_PASS"); v != "" {
+		c.DefaultAdminPass = v
+	}
+
 	if len(parseErrors) > 0 {
 		return parseErrors
 	}
@@ -271,6 +318,21 @@ func (c *Config) Validate() ValidationErrors {
 		errs = append(errs, ValidationError{
 			Field:   "LAUNCHPAD_VNC_SIDECAR_IMAGE",
 			Message: "VNC sidecar image cannot be empty",
+		})
+	}
+
+	// Validate auth configuration
+	if c.AuthEnabled && c.JWTSecret == "" {
+		errs = append(errs, ValidationError{
+			Field:   "LAUNCHPAD_JWT_SECRET",
+			Message: "JWT secret is required when authentication is enabled",
+		})
+	}
+
+	if c.JWTSecret != "" && len(c.JWTSecret) < 32 {
+		errs = append(errs, ValidationError{
+			Field:   "LAUNCHPAD_JWT_SECRET",
+			Message: "JWT secret must be at least 32 characters for security",
 		})
 	}
 

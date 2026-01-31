@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/rjsadow/launchpad/internal/auth"
 	"github.com/rjsadow/launchpad/internal/config"
 	"github.com/rjsadow/launchpad/internal/db"
 	"github.com/rjsadow/launchpad/internal/k8s"
@@ -25,6 +26,8 @@ var embeddedFiles embed.FS
 var database *db.DB
 var sessionManager *sessions.Manager
 var appConfig *config.Config
+var authMiddleware *auth.Middleware
+var authHandler *auth.Handler
 
 func main() {
 	// Parse command-line flags (can override env vars)
@@ -66,6 +69,16 @@ func main() {
 	sessionManager.Start()
 	defer sessionManager.Stop()
 
+	// Initialize authentication
+	tokenService := auth.NewTokenService(appConfig.JWTSecret, appConfig.TokenExpiry)
+	authMiddleware = auth.NewMiddleware(tokenService, appConfig.AuthEnabled)
+	authHandler = auth.NewHandler(database, tokenService, appConfig.AuthEnabled)
+
+	// Create default admin user if configured and no users exist
+	if err := authHandler.EnsureDefaultAdmin(appConfig.DefaultAdminUser, appConfig.DefaultAdminPass); err != nil {
+		log.Printf("Warning: failed to create default admin user: %v", err)
+	}
+
 	// Initialize WebSocket handler
 	wsHandler := websocket.NewHandler(sessionManager)
 
@@ -78,17 +91,28 @@ func main() {
 	// Create file server handler
 	fileServer := http.FileServer(http.FS(distFS))
 
-	// API routes
+	// Auth routes (public)
+	http.HandleFunc("/api/auth/status", authHandler.HandleAuthStatus)
+	http.HandleFunc("/api/auth/login", authHandler.HandleLogin)
+	http.HandleFunc("/api/auth/logout", authMiddleware.OptionalAuth(authHandler.HandleLogout))
+	http.HandleFunc("/api/auth/me", authMiddleware.RequireAuth(authHandler.HandleMe))
+	http.HandleFunc("/api/auth/register", authMiddleware.RequireAdmin(authHandler.HandleRegister))
+
+	// API routes - apps (read = optional auth, write = admin)
 	http.HandleFunc("/api/apps", handleApps)
 	http.HandleFunc("/api/apps/", handleAppByID)
-	http.HandleFunc("/api/audit", handleAuditLogs)
-	http.HandleFunc("/api/analytics/launch", handleAnalyticsLaunch)
-	http.HandleFunc("/api/analytics/stats", handleAnalyticsStats)
+
+	// Admin-only routes
+	http.HandleFunc("/api/audit", authMiddleware.RequireAdmin(handleAuditLogs))
+	http.HandleFunc("/api/analytics/stats", authMiddleware.RequireAdmin(handleAnalyticsStats))
+
+	// Authenticated routes
+	http.HandleFunc("/api/analytics/launch", authMiddleware.OptionalAuth(handleAnalyticsLaunch))
 	http.HandleFunc("/api/config", handleConfig)
 
-	// Session API routes
-	http.HandleFunc("/api/sessions", handleSessions)
-	http.HandleFunc("/api/sessions/", handleSessionByID)
+	// Session API routes (authenticated)
+	http.HandleFunc("/api/sessions", authMiddleware.RequireAuth(handleSessions))
+	http.HandleFunc("/api/sessions/", authMiddleware.RequireAuth(handleSessionByID))
 
 	// WebSocket route for session VNC streams
 	http.Handle("/ws/sessions/", wsHandler)
@@ -167,40 +191,44 @@ func handleApps(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(apps)
 
 	case http.MethodPost:
-		var app db.Application
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "Failed to read request body", http.StatusBadRequest)
-			return
-		}
-
-		if err := json.Unmarshal(body, &app); err != nil {
-			http.Error(w, "Invalid JSON", http.StatusBadRequest)
-			return
-		}
-
-		if app.ID == "" || app.Name == "" || app.URL == "" {
-			http.Error(w, "Missing required fields: id, name, url", http.StatusBadRequest)
-			return
-		}
-
-		if err := database.CreateApp(app); err != nil {
-			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-				http.Error(w, "Application with this ID already exists", http.StatusConflict)
+		// POST requires admin auth
+		authMiddleware.RequireAdmin(func(w http.ResponseWriter, r *http.Request) {
+			var app db.Application
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, "Failed to read request body", http.StatusBadRequest)
 				return
 			}
-			log.Printf("Error creating app: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
 
-		// Log the action
-		details := fmt.Sprintf("Created app: %s (%s)", app.Name, app.ID)
-		database.LogAudit("admin", "CREATE_APP", details)
+			if err := json.Unmarshal(body, &app); err != nil {
+				http.Error(w, "Invalid JSON", http.StatusBadRequest)
+				return
+			}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(app)
+			if app.ID == "" || app.Name == "" || app.URL == "" {
+				http.Error(w, "Missing required fields: id, name, url", http.StatusBadRequest)
+				return
+			}
+
+			if err := database.CreateApp(app); err != nil {
+				if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+					http.Error(w, "Application with this ID already exists", http.StatusConflict)
+					return
+				}
+				log.Printf("Error creating app: %v", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+
+			// Log the action with authenticated user
+			userID := auth.GetUserID(r)
+			details := fmt.Sprintf("Created app: %s (%s)", app.Name, app.ID)
+			database.LogAudit(userID, "CREATE_APP", details)
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(app)
+		})(w, r)
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -233,67 +261,75 @@ func handleAppByID(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(app)
 
 	case http.MethodPut:
-		var app db.Application
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, "Failed to read request body", http.StatusBadRequest)
-			return
-		}
+		// PUT requires admin auth
+		authMiddleware.RequireAdmin(func(w http.ResponseWriter, r *http.Request) {
+			var app db.Application
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, "Failed to read request body", http.StatusBadRequest)
+				return
+			}
 
-		if err := json.Unmarshal(body, &app); err != nil {
-			http.Error(w, "Invalid JSON", http.StatusBadRequest)
-			return
-		}
+			if err := json.Unmarshal(body, &app); err != nil {
+				http.Error(w, "Invalid JSON", http.StatusBadRequest)
+				return
+			}
 
-		// Use ID from URL path
-		app.ID = id
+			// Use ID from URL path
+			app.ID = id
 
-		if app.Name == "" || app.URL == "" {
-			http.Error(w, "Missing required fields: name, url", http.StatusBadRequest)
-			return
-		}
+			if app.Name == "" || app.URL == "" {
+				http.Error(w, "Missing required fields: name, url", http.StatusBadRequest)
+				return
+			}
 
-		if err := database.UpdateApp(app); err != nil {
-			if err.Error() == "sql: no rows in result set" {
+			if err := database.UpdateApp(app); err != nil {
+				if err.Error() == "sql: no rows in result set" {
+					http.Error(w, "Application not found", http.StatusNotFound)
+					return
+				}
+				log.Printf("Error updating app: %v", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+
+			// Log the action with authenticated user
+			userID := auth.GetUserID(r)
+			details := fmt.Sprintf("Updated app: %s (%s)", app.Name, app.ID)
+			database.LogAudit(userID, "UPDATE_APP", details)
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(app)
+		})(w, r)
+
+	case http.MethodDelete:
+		// DELETE requires admin auth
+		authMiddleware.RequireAdmin(func(w http.ResponseWriter, r *http.Request) {
+			// Get app name before deleting for audit log
+			app, err := database.GetApp(id)
+			if err != nil {
+				log.Printf("Error getting app: %v", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+			if app == nil {
 				http.Error(w, "Application not found", http.StatusNotFound)
 				return
 			}
-			log.Printf("Error updating app: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
 
-		// Log the action
-		details := fmt.Sprintf("Updated app: %s (%s)", app.Name, app.ID)
-		database.LogAudit("admin", "UPDATE_APP", details)
+			if err := database.DeleteApp(id); err != nil {
+				log.Printf("Error deleting app: %v", err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(app)
+			// Log the action with authenticated user
+			userID := auth.GetUserID(r)
+			details := fmt.Sprintf("Deleted app: %s (%s)", app.Name, id)
+			database.LogAudit(userID, "DELETE_APP", details)
 
-	case http.MethodDelete:
-		// Get app name before deleting for audit log
-		app, err := database.GetApp(id)
-		if err != nil {
-			log.Printf("Error getting app: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-		if app == nil {
-			http.Error(w, "Application not found", http.StatusNotFound)
-			return
-		}
-
-		if err := database.DeleteApp(id); err != nil {
-			log.Printf("Error deleting app: %v", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-
-		// Log the action
-		details := fmt.Sprintf("Deleted app: %s (%s)", app.Name, id)
-		database.LogAudit("admin", "DELETE_APP", details)
-
-		w.WriteHeader(http.StatusNoContent)
+			w.WriteHeader(http.StatusNoContent)
+		})(w, r)
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -466,10 +502,9 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Default user ID if not provided
-		if req.UserID == "" {
-			req.UserID = "anonymous"
-		}
+		// Use authenticated user ID
+		userID := auth.GetUserID(r)
+		req.UserID = userID
 
 		session, err := sessionManager.CreateSession(r.Context(), &req)
 		if err != nil {
@@ -489,7 +524,7 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 
 		// Log the action
 		details := fmt.Sprintf("Created session %s for app %s", session.ID, session.AppID)
-		database.LogAudit(req.UserID, "CREATE_SESSION", details)
+		database.LogAudit(userID, "CREATE_SESSION", details)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -546,15 +581,23 @@ func handleSessionByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Check if user owns this session or is admin
+		user := auth.GetUser(r)
+		if user != nil && !user.IsAdmin && user.UserID != session.UserID {
+			http.Error(w, "Forbidden: you can only terminate your own sessions", http.StatusForbidden)
+			return
+		}
+
 		if err := sessionManager.TerminateSession(r.Context(), id); err != nil {
 			log.Printf("Error terminating session: %v", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		// Log the action
+		// Log the action with authenticated user
+		userID := auth.GetUserID(r)
 		details := fmt.Sprintf("Terminated session %s", id)
-		database.LogAudit("admin", "TERMINATE_SESSION", details)
+		database.LogAudit(userID, "TERMINATE_SESSION", details)
 
 		w.WriteHeader(http.StatusNoContent)
 

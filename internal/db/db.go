@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
 )
 
@@ -33,6 +34,17 @@ type Application struct {
 // AppConfig is the JSON structure for apps.json
 type AppConfig struct {
 	Applications []Application `json:"applications"`
+}
+
+// User represents a user account
+type User struct {
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	Email        string    `json:"email,omitempty"`
+	PasswordHash string    `json:"-"` // Never include in JSON
+	IsAdmin      bool      `json:"is_admin"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // AuditLog represents an audit log entry
@@ -97,6 +109,16 @@ func (db *DB) Close() error {
 // migrate creates the necessary tables
 func (db *DB) migrate() error {
 	schema := `
+	CREATE TABLE IF NOT EXISTS users (
+		id TEXT PRIMARY KEY,
+		username TEXT NOT NULL UNIQUE,
+		email TEXT UNIQUE,
+		password_hash TEXT NOT NULL,
+		is_admin INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
 	CREATE TABLE IF NOT EXISTS applications (
 		id TEXT PRIMARY KEY,
 		name TEXT NOT NULL,
@@ -135,6 +157,7 @@ func (db *DB) migrate() error {
 		FOREIGN KEY (app_id) REFERENCES applications(id)
 	);
 
+	CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 	CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_analytics_app_id ON analytics(app_id);
 	CREATE INDEX IF NOT EXISTS idx_analytics_timestamp ON analytics(timestamp);
@@ -547,4 +570,187 @@ func (db *DB) GetStaleSessions(timeout time.Duration) ([]Session, error) {
 	}
 
 	return sessions, rows.Err()
+}
+
+// HashPassword creates a bcrypt hash of the password
+func HashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	return string(bytes), err
+}
+
+// CheckPassword compares a password against a hash
+func CheckPassword(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
+}
+
+// CreateUser creates a new user with a hashed password
+func (db *DB) CreateUser(user User, password string) error {
+	hash, err := HashPassword(password)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	now := time.Now()
+	_, err = db.conn.Exec(
+		"INSERT INTO users (id, username, email, password_hash, is_admin, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		user.ID, user.Username, user.Email, hash, user.IsAdmin, now, now,
+	)
+	return err
+}
+
+// GetUser returns a user by ID
+func (db *DB) GetUser(id string) (*User, error) {
+	var user User
+	var isAdmin int
+	err := db.conn.QueryRow(
+		"SELECT id, username, email, password_hash, is_admin, created_at, updated_at FROM users WHERE id = ?",
+		id,
+	).Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash, &isAdmin, &user.CreatedAt, &user.UpdatedAt)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	user.IsAdmin = isAdmin != 0
+	return &user, nil
+}
+
+// GetUserByUsername returns a user by username
+func (db *DB) GetUserByUsername(username string) (*User, error) {
+	var user User
+	var isAdmin int
+	var email sql.NullString
+	err := db.conn.QueryRow(
+		"SELECT id, username, email, password_hash, is_admin, created_at, updated_at FROM users WHERE username = ?",
+		username,
+	).Scan(&user.ID, &user.Username, &email, &user.PasswordHash, &isAdmin, &user.CreatedAt, &user.UpdatedAt)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	user.IsAdmin = isAdmin != 0
+	if email.Valid {
+		user.Email = email.String
+	}
+	return &user, nil
+}
+
+// ListUsers returns all users
+func (db *DB) ListUsers() ([]User, error) {
+	rows, err := db.conn.Query(
+		"SELECT id, username, email, is_admin, created_at, updated_at FROM users ORDER BY username",
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []User
+	for rows.Next() {
+		var user User
+		var isAdmin int
+		var email sql.NullString
+		if err := rows.Scan(&user.ID, &user.Username, &email, &isAdmin, &user.CreatedAt, &user.UpdatedAt); err != nil {
+			return nil, err
+		}
+		user.IsAdmin = isAdmin != 0
+		if email.Valid {
+			user.Email = email.String
+		}
+		users = append(users, user)
+	}
+
+	return users, rows.Err()
+}
+
+// UpdateUser updates a user's profile (not password)
+func (db *DB) UpdateUser(user User) error {
+	result, err := db.conn.Exec(
+		"UPDATE users SET username = ?, email = ?, is_admin = ?, updated_at = ? WHERE id = ?",
+		user.Username, user.Email, user.IsAdmin, time.Now(), user.ID,
+	)
+	if err != nil {
+		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// UpdateUserPassword updates a user's password
+func (db *DB) UpdateUserPassword(id, password string) error {
+	hash, err := HashPassword(password)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	result, err := db.conn.Exec(
+		"UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+		hash, time.Now(), id,
+	)
+	if err != nil {
+		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// DeleteUser removes a user by ID
+func (db *DB) DeleteUser(id string) error {
+	result, err := db.conn.Exec("DELETE FROM users WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// ValidateUserCredentials checks username/password and returns the user if valid
+func (db *DB) ValidateUserCredentials(username, password string) (*User, error) {
+	user, err := db.GetUserByUsername(username)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, nil
+	}
+
+	if !CheckPassword(password, user.PasswordHash) {
+		return nil, nil
+	}
+
+	return user, nil
+}
+
+// UserCount returns the total number of users
+func (db *DB) UserCount() (int, error) {
+	var count int
+	err := db.conn.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
+	return count, err
 }
