@@ -72,7 +72,10 @@ jobs:
       - name: Go mod tidy check
         run: |
           go mod tidy
-          git diff --exit-code go.mod go.sum || (echo "go.mod or go.sum is not tidy" && exit 1)
+          git diff --exit-code go.mod || (echo "go.mod is not tidy" && exit 1)
+          if [ -f go.sum ]; then
+            git diff --exit-code go.sum || (echo "go.sum is not tidy" && exit 1)
+          fi
 
       - name: Go vet
         run: go vet ./...
@@ -181,5 +184,5 @@ jobs:
       - name: Check links
         uses: lycheeverse/lychee-action@v2
         with:
-          args: --no-progress --exclude-mail 'docs/**/*.md' 'agents/**/*.md' '*.md'
+          args: --no-progress 'docs/**/*.md' 'agents/**/*.md' '*.md'
           fail: true
