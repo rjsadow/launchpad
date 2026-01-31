@@ -3,13 +3,17 @@
 A centralized application launcher for large organizations.
 
 <!-- Screenshot placeholder: Add screenshot of the main dashboard here -->
-![Launchpad Dashboard](docs/assets/screenshot-dashboard.png)
+<!-- ![Launchpad Dashboard](docs/assets/screenshot-dashboard.png) -->
 
 ## The Problem
 
-Large organizations have dozens or hundreds of internal applications scattered across different URLs, wikis, and bookmarks. Employees waste time searching for the right tool, and new hires struggle to discover what's available.
+Large organizations have dozens or hundreds of internal applications
+scattered across different URLs, wikis, and bookmarks. Employees waste time
+searching for the right tool, and new hires struggle to discover what's
+available.
 
-**Launchpad solves this** by providing a single, searchable portal where users can find and launch any application instantly.
+**Launchpad solves this** by providing a single, searchable portal where
+users can find and launch any application instantly.
 
 ## Core Concepts
 
@@ -17,16 +21,23 @@ Large organizations have dozens or hundreds of internal applications scattered a
 
 An **App** is any application registered in Launchpad. Apps can be:
 
-- **URL-based**: Opens an external URL in a new tab (e.g., GitHub, Jira, internal tools)
-- **Container-based**: Launches a containerized application in Kubernetes with VNC access (e.g., Firefox, LibreOffice, GIMP)
+- **URL-based**: Opens an external URL in a new tab
+  (e.g., GitHub, Jira, internal tools)
+- **Container-based**: Launches a containerized application in Kubernetes
+  with VNC access (e.g., Firefox, LibreOffice, GIMP)
 
 ### Sessions
 
-A **Session** is created when a user launches a container-based app. Each session represents a running Kubernetes pod that the user can interact with via WebSocket/VNC streaming. Sessions are isolated per user and automatically cleaned up when terminated.
+A **Session** is created when a user launches a container-based app. Each
+session represents a running Kubernetes pod that the user can interact with
+via WebSocket/VNC streaming. Sessions are isolated per user and automatically
+cleaned up when terminated.
 
 ### Users
 
-A **User** is anyone accessing Launchpad. Users can browse available apps, search by name or category, and launch applications. Future versions will support SSO authentication and personalized favorites.
+A **User** is anyone accessing Launchpad. Users can browse available apps,
+search by name or category, and launch applications. Future versions will
+support SSO authentication and personalized favorites.
 
 ## Quickstart
 
@@ -75,7 +86,7 @@ cd web && npm install && npm run dev
 - **Audit Logging**: Record all administrative actions
 
 <!-- GIF placeholder: Add demo GIF showing search and launch flow -->
-![Demo](docs/assets/demo.gif)
+<!-- ![Demo](docs/assets/demo.gif) -->
 
 ## Configuration
 
@@ -116,7 +127,7 @@ Seed on startup:
 ## API Endpoints
 
 | Endpoint | Method | Description |
-|----------|--------|-------------|
+| -------- | ------ | ----------- |
 | `/api/apps` | GET | List all applications |
 | `/api/apps` | POST | Create a new application |
 | `/api/apps/{id}` | GET/PUT/DELETE | Manage a specific app |
@@ -137,7 +148,7 @@ For container-based apps, see [docs/KUBERNETES.md](docs/KUBERNETES.md).
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────┐
 │           User's Browser                │
 │  ┌───────────────────────────────────┐  │
