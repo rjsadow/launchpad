@@ -7,13 +7,13 @@ and how to manage it across deployments.
 
 Launchpad uses a layered persistence strategy:
 
-| Data Type | Storage | Persistence | Survives Pod Restart |
-|-----------|---------|-------------|----------------------|
-| User Settings | Browser localStorage | Per-browser | Yes (client-side) |
-| App Specs | SQLite database | Server-side | Yes (with PVC) |
-| Session Metadata | SQLite + in-memory cache | Server-side | Partial |
-| Workspace Volume | Kubernetes emptyDir | Pod-local | No |
-| Audit/Analytics | SQLite database | Server-side | Yes (with PVC) |
+| Data Type        | Storage                  | Persistence | Survives Restart |
+| ---------------- | ------------------------ | ----------- | ---------------- |
+| User Settings    | Browser localStorage     | Per-browser | Yes (client)     |
+| App Specs        | SQLite database          | Server-side | Yes (with PVC)   |
+| Session Metadata | SQLite + in-memory cache | Server-side | Partial          |
+| Workspace Volume | Kubernetes emptyDir      | Pod-local   | No               |
+| Audit/Analytics  | SQLite database          | Server-side | Yes (with PVC)   |
 
 ## User Settings
 
@@ -21,10 +21,10 @@ User preferences are stored client-side in the browser's localStorage.
 
 ### What Persists
 
-| Key | Value | Purpose |
-|-----|-------|---------|
-| `launchpad-theme` | `'dark'` or `'light'` | User's color scheme preference |
-| `launchpad-collapsed` | JSON array of category names | Collapsed sidebar categories |
+| Key                   | Value                  | Purpose                  |
+| --------------------- | ---------------------- | ------------------------ |
+| `launchpad-theme`     | `'dark'` or `'light'`  | Color scheme preference  |
+| `launchpad-collapsed` | JSON array of names    | Collapsed categories     |
 
 ### Storage Location
 
@@ -121,13 +121,13 @@ Example seed file (`examples/apps-with-containers.json`):
 
 ### CRUD Operations
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/apps` | GET | List all applications |
-| `/api/apps` | POST | Create application |
-| `/api/apps/{id}` | GET | Get single application |
-| `/api/apps/{id}` | PUT | Update application |
-| `/api/apps/{id}` | DELETE | Delete application |
+| Endpoint         | Method | Description            |
+| ---------------- | ------ | ---------------------- |
+| `/api/apps`      | GET    | List all applications  |
+| `/api/apps`      | POST   | Create application     |
+| `/api/apps/{id}` | GET    | Get single application |
+| `/api/apps/{id}` | PUT    | Update application     |
+| `/api/apps/{id}` | DELETE | Delete application     |
 
 All mutations are logged to the audit table.
 
@@ -135,7 +135,7 @@ All mutations are logged to the audit table.
 
 Sessions track active container-based application instances.
 
-### Schema
+### Session Schema
 
 ```sql
 CREATE TABLE sessions (
@@ -155,7 +155,7 @@ CREATE INDEX idx_sessions_status ON sessions(status);
 
 ### Session States
 
-```
+```text
 ┌──────────┐     success     ┌─────────┐
 │ creating │ ───────────────▶│ running │
 └────┬─────┘                 └────┬────┘
@@ -169,13 +169,13 @@ CREATE INDEX idx_sessions_status ON sessions(status);
 
 Valid state transitions (`internal/sessions/state.go`):
 
-| From | To |
-|------|----|
-| `creating` | `running`, `failed` |
-| `running` | `stopped`, `expired`, `failed` |
-| `stopped` | (terminal) |
-| `expired` | (terminal) |
-| `failed` | (terminal) |
+| From       | To                             |
+| ---------- | ------------------------------ |
+| `creating` | `running`, `failed`            |
+| `running`  | `stopped`, `expired`, `failed` |
+| `stopped`  | (terminal)                     |
+| `expired`  | (terminal)                     |
+| `failed`   | (terminal)                     |
 
 ### In-Memory Cache
 
@@ -209,9 +209,9 @@ termination.
 ### Configuration
 
 ```bash
-LAUNCHPAD_SESSION_TIMEOUT=120          # Minutes until expiry (default: 120)
-LAUNCHPAD_SESSION_CLEANUP_INTERVAL=5   # Minutes between cleanup runs (default: 5)
-LAUNCHPAD_POD_READY_TIMEOUT=120        # Seconds to wait for pod (default: 120)
+LAUNCHPAD_SESSION_TIMEOUT=120          # Minutes until expiry
+LAUNCHPAD_SESSION_CLEANUP_INTERVAL=5   # Minutes between cleanup
+LAUNCHPAD_POD_READY_TIMEOUT=120        # Seconds to wait for pod
 ```
 
 ## Workspace Volume
@@ -307,13 +307,13 @@ CREATE INDEX idx_audit_timestamp ON audit_log(timestamp);
 
 ### Tracked Actions
 
-| Action | Trigger | Details |
-|--------|---------|---------|
-| `CREATE_APP` | POST /api/apps | App name, ID |
-| `UPDATE_APP` | PUT /api/apps/{id} | App ID, changes |
-| `DELETE_APP` | DELETE /api/apps/{id} | App ID |
-| `CREATE_SESSION` | POST /api/sessions | User ID, App ID |
-| `TERMINATE_SESSION` | DELETE /api/sessions/{id} | Session ID |
+| Action              | Trigger                   | Details         |
+| ------------------- | ------------------------- | --------------- |
+| `CREATE_APP`        | POST /api/apps            | App name, ID    |
+| `UPDATE_APP`        | PUT /api/apps/{id}        | App ID, changes |
+| `DELETE_APP`        | DELETE /api/apps/{id}     | App ID          |
+| `CREATE_SESSION`    | POST /api/sessions        | User ID, App ID |
+| `TERMINATE_SESSION` | DELETE /api/sessions/{id} | Session ID      |
 
 ### Analytics Schema
 
@@ -330,10 +330,10 @@ CREATE INDEX idx_analytics_timestamp ON analytics(timestamp);
 
 ### API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/audit` | GET | Last 100 audit entries |
-| `/api/analytics` | GET | App launch statistics |
+| Endpoint          | Method | Description             |
+| ----------------- | ------ | ----------------------- |
+| `/api/audit`      | GET    | Last 100 audit entries  |
+| `/api/analytics`  | GET    | App launch statistics   |
 
 ## Backups
 
@@ -347,7 +347,10 @@ kubectl exec -n launchpad deployment/launchpad -- \
   sqlite3 /data/launchpad.db ".backup '/data/backup.db'"
 
 # Copy to local machine
-kubectl cp launchpad/$(kubectl get pod -n launchpad -l app=launchpad -o jsonpath='{.items[0].metadata.name}'):/data/backup.db ./launchpad-backup-$(date +%Y%m%d).db
+POD=$(kubectl get pod -n launchpad -l app=launchpad \
+  -o jsonpath='{.items[0].metadata.name}')
+kubectl cp launchpad/$POD:/data/backup.db \
+  ./launchpad-backup-$(date +%Y%m%d).db
 ```
 
 #### Automated Backup CronJob
@@ -372,7 +375,8 @@ spec:
                 - -c
                 - |
                   apk add --no-cache sqlite
-                  sqlite3 /data/launchpad.db ".backup '/backup/launchpad-$(date +%Y%m%d).db'"
+                  BACKUP="/backup/launchpad-$(date +%Y%m%d).db"
+                  sqlite3 /data/launchpad.db ".backup '$BACKUP'"
               volumeMounts:
                 - name: data
                   mountPath: /data
@@ -410,28 +414,31 @@ spec:
 ### Restore Procedure
 
 1. Stop the Launchpad deployment:
+
    ```bash
    kubectl scale deployment launchpad -n launchpad --replicas=0
    ```
 
 2. Copy backup to the data volume:
+
    ```bash
    kubectl cp ./launchpad-backup.db launchpad/restore-pod:/data/launchpad.db
    ```
 
 3. Restart the deployment:
+
    ```bash
    kubectl scale deployment launchpad -n launchpad --replicas=1
    ```
 
 ### Disaster Recovery
 
-| Scenario | Recovery Method |
-|----------|-----------------|
-| Pod restart | PVC data intact, automatic recovery |
-| PVC corruption | Restore from backup |
-| Namespace deletion | Restore manifests + backup database |
-| Cluster loss | Re-deploy from GitOps + off-cluster backup |
+| Scenario           | Recovery Method                       |
+| ------------------ | ------------------------------------- |
+| Pod restart        | PVC data intact, automatic recovery   |
+| PVC corruption     | Restore from backup                   |
+| Namespace deletion | Restore manifests + backup database   |
+| Cluster loss       | Re-deploy from GitOps + off-cluster   |
 
 ### Off-Cluster Backup
 
@@ -477,17 +484,18 @@ Mounted via ConfigMap in Kubernetes deployments.
 
 ## Summary
 
-| What | Where | How to Backup |
-|------|-------|---------------|
-| User preferences | Browser localStorage | N/A (client-side) |
-| Applications | SQLite `applications` table | Database backup |
-| Sessions | SQLite `sessions` table + memory | Database backup (active sessions lost) |
-| Audit logs | SQLite `audit_log` table | Database backup |
-| Analytics | SQLite `analytics` table | Database backup |
-| Branding config | ConfigMap / JSON file | GitOps |
-| K8s manifests | Git repository | GitOps |
+| What             | Where                         | How to Backup       |
+| ---------------- | ----------------------------- | ------------------- |
+| User preferences | Browser localStorage          | N/A (client-side)   |
+| Applications     | SQLite `applications` table   | Database backup     |
+| Sessions         | SQLite `sessions` + memory    | DB backup (no live) |
+| Audit logs       | SQLite `audit_log` table      | Database backup     |
+| Analytics        | SQLite `analytics` table      | Database backup     |
+| Branding config  | ConfigMap / JSON file         | GitOps              |
+| K8s manifests    | Git repository                | GitOps              |
 
 For production deployments:
+
 1. Use PersistentVolumeClaim for database storage
 2. Configure automated daily backups
 3. Test restore procedures regularly
