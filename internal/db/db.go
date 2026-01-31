@@ -47,11 +47,12 @@ type AuditLog struct {
 // SessionStatus represents the status of a container session.
 // Valid states: creating, running, failed, stopped, expired
 // State machine:
-//   creating -> running (pod ready)
-//   creating -> failed  (pod creation failed)
-//   running  -> stopped (user terminated)
-//   running  -> expired (timeout cleanup)
-//   running  -> failed  (runtime error)
+//
+//	creating -> running (pod ready)
+//	creating -> failed  (pod creation failed)
+//	running  -> stopped (user terminated)
+//	running  -> expired (timeout cleanup)
+//	running  -> failed  (runtime error)
 type SessionStatus string
 
 const (
@@ -98,6 +99,12 @@ func Open(dbPath string) (*DB, error) {
 // Close closes the database connection
 func (db *DB) Close() error {
 	return db.conn.Close()
+}
+
+// Conn returns the underlying sql.DB connection
+// Used by other packages that need direct database access (e.g., RBAC)
+func (db *DB) Conn() *sql.DB {
+	return db.conn
 }
 
 // migrate creates the necessary tables

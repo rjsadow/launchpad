@@ -16,6 +16,7 @@ import (
 	"github.com/rjsadow/launchpad/internal/db"
 	"github.com/rjsadow/launchpad/internal/k8s"
 	"github.com/rjsadow/launchpad/internal/middleware"
+	"github.com/rjsadow/launchpad/internal/rbac"
 	"github.com/rjsadow/launchpad/internal/sessions"
 	"github.com/rjsadow/launchpad/internal/websocket"
 )
@@ -26,6 +27,8 @@ var embeddedFiles embed.FS
 var database *db.DB
 var sessionManager *sessions.Manager
 var appConfig *config.Config
+var rbacStore *rbac.DBStore
+var rbacMiddleware *rbac.Middleware
 
 func main() {
 	// Parse command-line flags (can override env vars)
@@ -58,6 +61,22 @@ func main() {
 		}
 	}
 
+	// Initialize RBAC store and middleware
+	rbacStore, err = rbac.NewDBStore(database.Conn())
+	if err != nil {
+		log.Fatal("Failed to initialize RBAC store:", err)
+	}
+
+	rbacMiddleware = rbac.NewMiddleware(rbacStore,
+		rbac.WithBypassPaths([]string{
+			"/",
+			"/index.html",
+			"/assets/*",
+			"/favicon.ico",
+		}),
+		rbac.WithAuthEnabled(true),
+	)
+
 	// Initialize session manager with config
 	sessionManager = sessions.NewManagerWithConfig(database, sessions.ManagerConfig{
 		SessionTimeout:  appConfig.SessionTimeout,
@@ -79,26 +98,34 @@ func main() {
 	// Create file server handler
 	fileServer := http.FileServer(http.FS(distFS))
 
-	// API routes
-	http.HandleFunc("/api/apps", handleApps)
-	http.HandleFunc("/api/apps/", handleAppByID)
-	http.HandleFunc("/api/audit", handleAuditLogs)
-	http.HandleFunc("/api/analytics/launch", handleAnalyticsLaunch)
-	http.HandleFunc("/api/analytics/stats", handleAnalyticsStats)
-	http.HandleFunc("/api/config", handleConfig)
+	// Create a new ServeMux for API routes with RBAC
+	mux := http.NewServeMux()
+
+	// API routes with RBAC enforcement
+	mux.HandleFunc("/api/apps", handleApps)
+	mux.HandleFunc("/api/apps/", handleAppByID)
+	mux.HandleFunc("/api/audit", handleAuditLogs)
+	mux.HandleFunc("/api/analytics/launch", handleAnalyticsLaunch)
+	mux.HandleFunc("/api/analytics/stats", handleAnalyticsStats)
+	mux.HandleFunc("/api/config", handleConfig)
 
 	// Session API routes
-	http.HandleFunc("/api/sessions", handleSessions)
-	http.HandleFunc("/api/sessions/", handleSessionByID)
+	mux.HandleFunc("/api/sessions", handleSessions)
+	mux.HandleFunc("/api/sessions/", handleSessionByID)
+
+	// RBAC management routes (admin only)
+	mux.HandleFunc("/api/rbac/roles", handleRBACRoles)
+	mux.HandleFunc("/api/rbac/users", handleRBACUsers)
+	mux.HandleFunc("/api/rbac/users/", handleRBACUserByID)
 
 	// WebSocket route for session VNC streams
-	http.Handle("/ws/sessions/", wsHandler)
+	mux.Handle("/ws/sessions/", wsHandler)
 
 	// Serve apps.json from database (for frontend compatibility)
-	http.HandleFunc("/apps.json", handleAppsJSON)
+	mux.HandleFunc("/apps.json", handleAppsJSON)
 
 	// Handle static files and SPA routing
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Try to serve the file directly
 		path := r.URL.Path
 		if path == "/" {
@@ -118,9 +145,10 @@ func main() {
 
 	addr := fmt.Sprintf(":%d", appConfig.Port)
 	log.Printf("Launchpad server starting on http://localhost%s", addr)
+	log.Printf("RBAC enabled - roles: admin, app-author, user")
 
-	// Wrap default mux with security headers middleware
-	handler := middleware.SecurityHeaders(http.DefaultServeMux)
+	// Chain middleware: security headers -> RBAC authentication
+	handler := middleware.SecurityHeaders(rbacMiddleware.Authenticate(mux))
 
 	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatal("Server error:", err)
@@ -156,6 +184,11 @@ func handleAppsJSON(w http.ResponseWriter, r *http.Request) {
 func handleApps(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		// Requires app:read permission
+		if !rbac.CheckPermission(w, r, rbac.PermissionAppRead) {
+			return
+		}
+
 		apps, err := database.ListApps()
 		if err != nil {
 			log.Printf("Error listing apps: %v", err)
@@ -171,6 +204,11 @@ func handleApps(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(apps)
 
 	case http.MethodPost:
+		// Requires app:create permission (admin or app-author)
+		if !rbac.CheckPermission(w, r, rbac.PermissionAppCreate) {
+			return
+		}
+
 		var app db.Application
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -198,9 +236,14 @@ func handleApps(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Log the action
+		// Log the action with actual user
+		user := rbac.GetUserFromRequest(r)
+		userID := "unknown"
+		if user != nil {
+			userID = user.ID
+		}
 		details := fmt.Sprintf("Created app: %s (%s)", app.Name, app.ID)
-		database.LogAudit("admin", "CREATE_APP", details)
+		database.LogAudit(userID, "CREATE_APP", details)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -220,8 +263,20 @@ func handleAppByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get user for audit logging
+	user := rbac.GetUserFromRequest(r)
+	userID := "unknown"
+	if user != nil {
+		userID = user.ID
+	}
+
 	switch r.Method {
 	case http.MethodGet:
+		// Requires app:read permission
+		if !rbac.CheckPermission(w, r, rbac.PermissionAppRead) {
+			return
+		}
+
 		app, err := database.GetApp(id)
 		if err != nil {
 			log.Printf("Error getting app: %v", err)
@@ -237,6 +292,11 @@ func handleAppByID(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(app)
 
 	case http.MethodPut:
+		// Requires app:update permission (admin or app-author)
+		if !rbac.CheckPermission(w, r, rbac.PermissionAppUpdate) {
+			return
+		}
+
 		var app db.Application
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -269,12 +329,17 @@ func handleAppByID(w http.ResponseWriter, r *http.Request) {
 
 		// Log the action
 		details := fmt.Sprintf("Updated app: %s (%s)", app.Name, app.ID)
-		database.LogAudit("admin", "UPDATE_APP", details)
+		database.LogAudit(userID, "UPDATE_APP", details)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(app)
 
 	case http.MethodDelete:
+		// Requires app:delete permission (admin only)
+		if !rbac.CheckPermission(w, r, rbac.PermissionAppDelete) {
+			return
+		}
+
 		// Get app name before deleting for audit log
 		app, err := database.GetApp(id)
 		if err != nil {
@@ -295,7 +360,7 @@ func handleAppByID(w http.ResponseWriter, r *http.Request) {
 
 		// Log the action
 		details := fmt.Sprintf("Deleted app: %s (%s)", app.Name, id)
-		database.LogAudit("admin", "DELETE_APP", details)
+		database.LogAudit(userID, "DELETE_APP", details)
 
 		w.WriteHeader(http.StatusNoContent)
 
@@ -308,6 +373,11 @@ func handleAppByID(w http.ResponseWriter, r *http.Request) {
 func handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Requires audit:read permission (admin only)
+	if !rbac.CheckPermission(w, r, rbac.PermissionAuditRead) {
 		return
 	}
 
@@ -330,6 +400,11 @@ func handleAuditLogs(w http.ResponseWriter, r *http.Request) {
 func handleAnalyticsLaunch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Requires analytics:write permission (all authenticated users)
+	if !rbac.CheckPermission(w, r, rbac.PermissionAnalyticsWrite) {
 		return
 	}
 
@@ -370,6 +445,11 @@ func handleAnalyticsStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Requires analytics:read permission (admin and app-author)
+	if !rbac.CheckPermission(w, r, rbac.PermissionAnalyticsRead) {
+		return
+	}
+
 	stats, err := database.GetAnalyticsStats()
 	if err != nil {
 		log.Printf("Error getting analytics stats: %v", err)
@@ -396,6 +476,11 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Requires config:read permission (all authenticated users)
+	if !rbac.CheckPermission(w, r, rbac.PermissionConfigRead) {
+		return
+	}
+
 	// Use centralized config for branding
 	brandingCfg := BrandingConfig{
 		LogoURL:        appConfig.LogoURL,
@@ -415,17 +500,35 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 
 // handleSessions handles GET (list) and POST (create) for /api/sessions
 func handleSessions(w http.ResponseWriter, r *http.Request) {
+	// Get user from context for RBAC
+	user := rbac.GetUserFromRequest(r)
+	userID := "anonymous"
+	if user != nil {
+		userID = user.ID
+	}
+
 	switch r.Method {
 	case http.MethodGet:
-		// Optional filter by user_id
-		userID := r.URL.Query().Get("user_id")
+		// Requires session:read permission
+		if !rbac.CheckPermission(w, r, rbac.PermissionSessionRead) {
+			return
+		}
+
 		var sessionList []db.Session
 		var err error
 
-		if userID != "" {
-			sessionList, err = sessionManager.ListSessionsByUser(r.Context(), userID)
+		// Admin can see all sessions, others only see their own
+		if user != nil && user.HasPermission(rbac.PermissionSessionAll) {
+			// Admin: optional filter by user_id or list all
+			filterUserID := r.URL.Query().Get("user_id")
+			if filterUserID != "" {
+				sessionList, err = sessionManager.ListSessionsByUser(r.Context(), filterUserID)
+			} else {
+				sessionList, err = sessionManager.ListSessions(r.Context())
+			}
 		} else {
-			sessionList, err = sessionManager.ListSessions(r.Context())
+			// Non-admin: only their own sessions
+			sessionList, err = sessionManager.ListSessionsByUser(r.Context(), userID)
 		}
 
 		if err != nil {
@@ -453,6 +556,11 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(responses)
 
 	case http.MethodPost:
+		// Requires session:create permission
+		if !rbac.CheckPermission(w, r, rbac.PermissionSessionCreate) {
+			return
+		}
+
 		var req sessions.CreateSessionRequest
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -470,10 +578,8 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Default user ID if not provided
-		if req.UserID == "" {
-			req.UserID = "anonymous"
-		}
+		// Use authenticated user ID
+		req.UserID = userID
 
 		session, err := sessionManager.CreateSession(r.Context(), &req)
 		if err != nil {
@@ -493,7 +599,7 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 
 		// Log the action
 		details := fmt.Sprintf("Created session %s for app %s", session.ID, session.AppID)
-		database.LogAudit(req.UserID, "CREATE_SESSION", details)
+		database.LogAudit(userID, "CREATE_SESSION", details)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -513,8 +619,20 @@ func handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get user from context for RBAC
+	user := rbac.GetUserFromRequest(r)
+	userID := "anonymous"
+	if user != nil {
+		userID = user.ID
+	}
+
 	switch r.Method {
 	case http.MethodGet:
+		// Requires session:read permission
+		if !rbac.CheckPermission(w, r, rbac.PermissionSessionRead) {
+			return
+		}
+
 		session, err := sessionManager.GetSession(r.Context(), id)
 		if err != nil {
 			log.Printf("Error getting session: %v", err)
@@ -523,6 +641,12 @@ func handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		}
 		if session == nil {
 			http.Error(w, "Session not found", http.StatusNotFound)
+			return
+		}
+
+		// Non-admin users can only view their own sessions
+		if user != nil && !user.HasPermission(rbac.PermissionSessionAll) && session.UserID != userID {
+			rbac.WriteError(w, http.StatusForbidden, "forbidden", "cannot access other users' sessions")
 			return
 		}
 
@@ -539,6 +663,11 @@ func handleSessionByID(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(response)
 
 	case http.MethodDelete:
+		// Requires session:delete permission
+		if !rbac.CheckPermission(w, r, rbac.PermissionSessionDelete) {
+			return
+		}
+
 		session, err := sessionManager.GetSession(r.Context(), id)
 		if err != nil {
 			log.Printf("Error getting session: %v", err)
@@ -550,6 +679,12 @@ func handleSessionByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Non-admin users can only terminate their own sessions
+		if user != nil && !user.HasPermission(rbac.PermissionSessionAll) && session.UserID != userID {
+			rbac.WriteError(w, http.StatusForbidden, "forbidden", "cannot terminate other users' sessions")
+			return
+		}
+
 		if err := sessionManager.TerminateSession(r.Context(), id); err != nil {
 			log.Printf("Error terminating session: %v", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -558,7 +693,200 @@ func handleSessionByID(w http.ResponseWriter, r *http.Request) {
 
 		// Log the action
 		details := fmt.Sprintf("Terminated session %s", id)
-		database.LogAudit("admin", "TERMINATE_SESSION", details)
+		database.LogAudit(userID, "TERMINATE_SESSION", details)
+
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleRBACRoles returns available roles and their permissions
+func handleRBACRoles(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Any authenticated user can see the role definitions
+	user := rbac.GetUserFromRequest(r)
+	if user == nil {
+		rbac.WriteError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
+
+	type RoleInfo struct {
+		Name        rbac.Role         `json:"name"`
+		Permissions []rbac.Permission `json:"permissions"`
+	}
+
+	roles := []RoleInfo{
+		{Name: rbac.RoleAdmin, Permissions: rbac.GetPermissions(rbac.RoleAdmin)},
+		{Name: rbac.RoleAppAuthor, Permissions: rbac.GetPermissions(rbac.RoleAppAuthor)},
+		{Name: rbac.RoleUser, Permissions: rbac.GetPermissions(rbac.RoleUser)},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(roles)
+}
+
+// handleRBACUsers handles listing user roles (admin only)
+func handleRBACUsers(w http.ResponseWriter, r *http.Request) {
+	// Requires admin role
+	user := rbac.GetUserFromRequest(r)
+	if user == nil || !user.IsAdmin() {
+		rbac.WriteError(w, http.StatusForbidden, "forbidden", "admin role required")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// List all user role assignments
+		userRoles, err := rbacStore.ListUserRoles()
+		if err != nil {
+			log.Printf("Error listing user roles: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		if userRoles == nil {
+			userRoles = []rbac.UserRole{}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(userRoles)
+
+	case http.MethodPost:
+		// Create a new user role assignment
+		var req struct {
+			UserID string    `json:"user_id"`
+			Role   rbac.Role `json:"role"`
+		}
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Failed to read request body", http.StatusBadRequest)
+			return
+		}
+
+		if err := json.Unmarshal(body, &req); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if req.UserID == "" {
+			http.Error(w, "Missing required field: user_id", http.StatusBadRequest)
+			return
+		}
+
+		if !rbac.IsValidRole(string(req.Role)) {
+			http.Error(w, "Invalid role. Valid roles: admin, app-author, user", http.StatusBadRequest)
+			return
+		}
+
+		if err := rbacStore.SetUserRole(req.UserID, req.Role); err != nil {
+			log.Printf("Error setting user role: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Log the action
+		details := fmt.Sprintf("Assigned role %s to user %s", req.Role, req.UserID)
+		database.LogAudit(user.ID, "ASSIGN_ROLE", details)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"user_id": req.UserID,
+			"role":    req.Role,
+			"status":  "assigned",
+		})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleRBACUserByID handles GET, PUT, DELETE for /api/rbac/users/{user_id}
+func handleRBACUserByID(w http.ResponseWriter, r *http.Request) {
+	// Requires admin role
+	user := rbac.GetUserFromRequest(r)
+	if user == nil || !user.IsAdmin() {
+		rbac.WriteError(w, http.StatusForbidden, "forbidden", "admin role required")
+		return
+	}
+
+	// Extract user_id from path
+	targetUserID := strings.TrimPrefix(r.URL.Path, "/api/rbac/users/")
+	if targetUserID == "" {
+		http.Error(w, "Missing user ID", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		role, err := rbacStore.GetUserRole(targetUserID)
+		if err != nil {
+			log.Printf("Error getting user role: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"user_id": targetUserID,
+			"role":    role,
+		})
+
+	case http.MethodPut:
+		var req struct {
+			Role rbac.Role `json:"role"`
+		}
+
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Failed to read request body", http.StatusBadRequest)
+			return
+		}
+
+		if err := json.Unmarshal(body, &req); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if !rbac.IsValidRole(string(req.Role)) {
+			http.Error(w, "Invalid role. Valid roles: admin, app-author, user", http.StatusBadRequest)
+			return
+		}
+
+		if err := rbacStore.SetUserRole(targetUserID, req.Role); err != nil {
+			log.Printf("Error updating user role: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Log the action
+		details := fmt.Sprintf("Updated role for user %s to %s", targetUserID, req.Role)
+		database.LogAudit(user.ID, "UPDATE_ROLE", details)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"user_id": targetUserID,
+			"role":    req.Role,
+			"status":  "updated",
+		})
+
+	case http.MethodDelete:
+		if err := rbacStore.DeleteUserRole(targetUserID); err != nil {
+			log.Printf("Error deleting user role: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// Log the action
+		details := fmt.Sprintf("Removed role assignment for user %s", targetUserID)
+		database.LogAudit(user.ID, "REMOVE_ROLE", details)
 
 		w.WriteHeader(http.StatusNoContent)
 
