@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/rjsadow/launchpad/internal/auth"
 	"github.com/rjsadow/launchpad/internal/config"
 	"github.com/rjsadow/launchpad/internal/db"
 	"github.com/rjsadow/launchpad/internal/k8s"
@@ -67,6 +68,17 @@ func main() {
 	sessionManager.Start()
 	defer sessionManager.Stop()
 
+	// Initialize authentication services
+	jwtService := auth.NewJWTService(appConfig.JWTSecret, appConfig.JWTExpiration)
+	authHandlers := auth.NewHandlers(database, jwtService)
+	authMiddleware := middleware.NewAuthMiddleware(jwtService, appConfig.AuthEnabled)
+
+	if appConfig.AuthEnabled {
+		log.Printf("Authentication enabled")
+	} else {
+		log.Printf("Authentication disabled (development mode)")
+	}
+
 	// Initialize WebSocket handler
 	wsHandler := websocket.NewHandler(sessionManager)
 
@@ -79,17 +91,22 @@ func main() {
 	// Create file server handler
 	fileServer := http.FileServer(http.FS(distFS))
 
-	// API routes
-	http.HandleFunc("/api/apps", handleApps)
-	http.HandleFunc("/api/apps/", handleAppByID)
-	http.HandleFunc("/api/audit", handleAuditLogs)
+	// Authentication routes
+	http.HandleFunc("/api/auth/register", authHandlers.HandleRegister)
+	http.HandleFunc("/api/auth/login", authHandlers.HandleLogin)
+	http.HandleFunc("/api/auth/me", authMiddleware.RequireAuthFunc(authHandlers.HandleMe))
+
+	// API routes - public when auth disabled, protected when enabled
+	http.Handle("/api/apps", authMiddleware.OptionalAuth(http.HandlerFunc(handleApps)))
+	http.Handle("/api/apps/", authMiddleware.OptionalAuth(http.HandlerFunc(handleAppByID)))
+	http.Handle("/api/audit", authMiddleware.RequireAuth(http.HandlerFunc(handleAuditLogs)))
 	http.HandleFunc("/api/analytics/launch", handleAnalyticsLaunch)
-	http.HandleFunc("/api/analytics/stats", handleAnalyticsStats)
+	http.Handle("/api/analytics/stats", authMiddleware.RequireAuth(http.HandlerFunc(handleAnalyticsStats)))
 	http.HandleFunc("/api/config", handleConfig)
 
-	// Session API routes
-	http.HandleFunc("/api/sessions", handleSessions)
-	http.HandleFunc("/api/sessions/", handleSessionByID)
+	// Session API routes - protected when auth is enabled
+	http.Handle("/api/sessions", authMiddleware.OptionalAuth(http.HandlerFunc(handleSessions)))
+	http.Handle("/api/sessions/", authMiddleware.OptionalAuth(http.HandlerFunc(handleSessionByID)))
 
 	// WebSocket route for session VNC streams
 	http.Handle("/ws/sessions/", wsHandler)

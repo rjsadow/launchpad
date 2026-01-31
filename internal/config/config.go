@@ -35,6 +35,11 @@ type Config struct {
 	SessionTimeout         time.Duration
 	SessionCleanupInterval time.Duration
 	PodReadyTimeout        time.Duration
+
+	// Authentication configuration
+	JWTSecret     string
+	JWTExpiration time.Duration
+	AuthEnabled   bool
 }
 
 // ValidationError represents a configuration validation error.
@@ -74,6 +79,10 @@ const (
 	DefaultSessionTimeout         = 2 * time.Hour
 	DefaultSessionCleanupInterval = 5 * time.Minute
 	DefaultPodReadyTimeout        = 2 * time.Minute
+
+	// Authentication defaults
+	DefaultJWTExpiration = 24 * time.Hour
+	DefaultAuthEnabled   = false // Disabled by default for dev; enable in production
 )
 
 // Load reads configuration from environment variables and returns a Config.
@@ -99,6 +108,10 @@ func Load() (*Config, error) {
 		SessionTimeout:         DefaultSessionTimeout,
 		SessionCleanupInterval: DefaultSessionCleanupInterval,
 		PodReadyTimeout:        DefaultPodReadyTimeout,
+
+		// Authentication defaults
+		JWTExpiration: DefaultJWTExpiration,
+		AuthEnabled:   DefaultAuthEnabled,
 	}
 
 	// Load from environment variables
@@ -225,6 +238,42 @@ func (c *Config) loadFromEnv() error {
 		}
 	}
 
+	// Authentication configuration
+	if v := os.Getenv("LAUNCHPAD_JWT_SECRET"); v != "" {
+		c.JWTSecret = v
+	}
+
+	if v := os.Getenv("LAUNCHPAD_JWT_EXPIRATION"); v != "" {
+		hours, err := strconv.Atoi(v)
+		if err != nil {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_JWT_EXPIRATION",
+				Message: fmt.Sprintf("invalid expiration: %q (must be an integer representing hours)", v),
+			})
+		} else if hours <= 0 {
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_JWT_EXPIRATION",
+				Message: fmt.Sprintf("expiration must be positive: %d", hours),
+			})
+		} else {
+			c.JWTExpiration = time.Duration(hours) * time.Hour
+		}
+	}
+
+	if v := os.Getenv("LAUNCHPAD_AUTH_ENABLED"); v != "" {
+		switch strings.ToLower(v) {
+		case "true", "1", "yes":
+			c.AuthEnabled = true
+		case "false", "0", "no":
+			c.AuthEnabled = false
+		default:
+			parseErrors = append(parseErrors, ValidationError{
+				Field:   "LAUNCHPAD_AUTH_ENABLED",
+				Message: fmt.Sprintf("invalid boolean: %q (expected true/false)", v),
+			})
+		}
+	}
+
 	if len(parseErrors) > 0 {
 		return parseErrors
 	}
@@ -271,6 +320,20 @@ func (c *Config) Validate() ValidationErrors {
 		errs = append(errs, ValidationError{
 			Field:   "LAUNCHPAD_VNC_SIDECAR_IMAGE",
 			Message: "VNC sidecar image cannot be empty",
+		})
+	}
+
+	// Validate JWT secret when auth is enabled
+	if c.AuthEnabled && c.JWTSecret == "" {
+		errs = append(errs, ValidationError{
+			Field:   "LAUNCHPAD_JWT_SECRET",
+			Message: "JWT secret is required when authentication is enabled",
+		})
+	}
+	if c.AuthEnabled && len(c.JWTSecret) < 32 {
+		errs = append(errs, ValidationError{
+			Field:   "LAUNCHPAD_JWT_SECRET",
+			Message: "JWT secret must be at least 32 characters for security",
 		})
 	}
 

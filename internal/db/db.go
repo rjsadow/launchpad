@@ -74,6 +74,25 @@ type Session struct {
 	UpdatedAt time.Time     `json:"updated_at"`
 }
 
+// UserRole represents user roles for authorization
+type UserRole string
+
+const (
+	UserRoleAdmin UserRole = "admin"
+	UserRoleUser  UserRole = "user"
+)
+
+// User represents a user account for authentication
+type User struct {
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	Email        string    `json:"email"`
+	PasswordHash string    `json:"-"` // Never serialize password hash
+	Role         UserRole  `json:"role"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 // DB wraps the sql.DB connection
 type DB struct {
 	conn *sql.DB
@@ -141,11 +160,23 @@ func (db *DB) migrate() error {
 		FOREIGN KEY (app_id) REFERENCES applications(id)
 	);
 
+	CREATE TABLE IF NOT EXISTS users (
+		id TEXT PRIMARY KEY,
+		username TEXT UNIQUE NOT NULL,
+		email TEXT UNIQUE NOT NULL,
+		password_hash TEXT NOT NULL,
+		role TEXT NOT NULL DEFAULT 'user',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_analytics_app_id ON analytics(app_id);
 	CREATE INDEX IF NOT EXISTS idx_analytics_timestamp ON analytics(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 	CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username);
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);
 	`
 	_, err := db.conn.Exec(schema)
 	if err != nil {
@@ -553,4 +584,120 @@ func (db *DB) GetStaleSessions(timeout time.Duration) ([]Session, error) {
 	}
 
 	return sessions, rows.Err()
+}
+
+// CreateUser creates a new user
+func (db *DB) CreateUser(user User) error {
+	_, err := db.conn.Exec(
+		"INSERT INTO users (id, username, email, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		user.ID, user.Username, user.Email, user.PasswordHash, string(user.Role), user.CreatedAt, user.UpdatedAt,
+	)
+	return err
+}
+
+// GetUser returns a user by ID
+func (db *DB) GetUser(id string) (*User, error) {
+	var user User
+	var role string
+	err := db.conn.QueryRow(
+		"SELECT id, username, email, password_hash, role, created_at, updated_at FROM users WHERE id = ?",
+		id,
+	).Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash, &role, &user.CreatedAt, &user.UpdatedAt)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	user.Role = UserRole(role)
+	return &user, nil
+}
+
+// GetUserByUsername returns a user by username
+func (db *DB) GetUserByUsername(username string) (*User, error) {
+	var user User
+	var role string
+	err := db.conn.QueryRow(
+		"SELECT id, username, email, password_hash, role, created_at, updated_at FROM users WHERE username = ?",
+		username,
+	).Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash, &role, &user.CreatedAt, &user.UpdatedAt)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	user.Role = UserRole(role)
+	return &user, nil
+}
+
+// GetUserByEmail returns a user by email
+func (db *DB) GetUserByEmail(email string) (*User, error) {
+	var user User
+	var role string
+	err := db.conn.QueryRow(
+		"SELECT id, username, email, password_hash, role, created_at, updated_at FROM users WHERE email = ?",
+		email,
+	).Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash, &role, &user.CreatedAt, &user.UpdatedAt)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	user.Role = UserRole(role)
+	return &user, nil
+}
+
+// UpdateUser updates an existing user
+func (db *DB) UpdateUser(user User) error {
+	result, err := db.conn.Exec(
+		"UPDATE users SET username = ?, email = ?, password_hash = ?, role = ?, updated_at = ? WHERE id = ?",
+		user.Username, user.Email, user.PasswordHash, string(user.Role), time.Now(), user.ID,
+	)
+	if err != nil {
+		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// DeleteUser removes a user by ID
+func (db *DB) DeleteUser(id string) error {
+	result, err := db.conn.Exec("DELETE FROM users WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// UserExists checks if a user with the given username or email already exists
+func (db *DB) UserExists(username, email string) (bool, error) {
+	var count int
+	err := db.conn.QueryRow(
+		"SELECT COUNT(*) FROM users WHERE username = ? OR email = ?",
+		username, email,
+	).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
