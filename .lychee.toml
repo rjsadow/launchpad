@@ -1,0 +1,21 @@
+# Lychee link checker configuration
+# https://lychee.cli.rs/
+
+# Exclude placeholder/example URLs that are not meant to be real
+exclude = [
+    "example\\.com",
+    "your-cdn\\.com",
+    "your-registry",
+    "launchpad\\.example\\.com",
+    "localhost",
+    "127\\.0\\.0\\.1",
+]
+
+# Accept these status codes (some sites block automated requests)
+accept = [200, 204, 206]
+
+# Timeout for requests
+timeout = 20
+
+# Don't check fragments (anchors)
+include_fragments = false
