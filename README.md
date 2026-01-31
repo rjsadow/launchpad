@@ -109,7 +109,7 @@ Apps are configured via JSON. Create an `apps.json` file:
       "name": "Firefox Browser",
       "description": "Firefox in a secure container",
       "url": "",
-      "icon": "https://mozilla.org/firefox.svg",
+      "icon": "https://www.mozilla.org/media/protocol/img/logos/firefox/browser/logo.svg",
       "category": "Browsers",
       "launch_type": "container",
       "container_image": "jlesage/firefox:latest"
