@@ -1,0 +1,23 @@
+# Gitleaks configuration
+# https://github.com/gitleaks/gitleaks
+
+[extend]
+# Extend the default gitleaks config
+useDefault = true
+
+# Allowlist for known false positives
+[allowlist]
+  description = "Global allowlist for false positives"
+
+  # RFC 6455 WebSocket test nonce used in documentation examples
+  # This is a well-known test value, not a real secret
+  # See: https://datatracker.ietf.org/doc/html/rfc6455#section-5.4
+  regexTarget = "match"
+  regexes = [
+    '''dGhlIHNhbXBsZSBub25jZQ==''',  # "the sample nonce" in base64
+  ]
+
+  # Also allow this in specific documentation paths
+  paths = [
+    '''docs/REVERSE_PROXY\.md''',
+  ]
