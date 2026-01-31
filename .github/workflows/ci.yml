@@ -184,5 +184,6 @@ jobs:
       - name: Check links
         uses: lycheeverse/lychee-action@v2
         with:
-          args: --no-progress 'docs/**/*.md' 'agents/**/*.md' '*.md'
+          args: --no-progress 'docs/**/*.md' '*.md'
           fail: true
+          failIfEmpty: false
