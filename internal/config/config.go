@@ -76,7 +76,7 @@ const (
 	DefaultBrandingConfigPath     = "branding.json"
 	DefaultPrimaryColor           = "#398D9B"
 	DefaultSecondaryColor         = "#4AB7C3"
-	DefaultTenantName             = "Launchpad"
+	DefaultTenantName             = "Sortie"
 	DefaultNamespace              = "default"
 	DefaultVNCSidecarImage        = "ghcr.io/rjsadow/launchpad-vnc-sidecar:latest"
 	DefaultSessionTimeout         = 2 * time.Hour

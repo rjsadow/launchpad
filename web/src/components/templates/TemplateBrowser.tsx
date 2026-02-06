@@ -24,7 +24,7 @@ export function TemplateBrowser({ isOpen, onClose, onAddApp, darkMode }: Templat
 
   const [selectedTemplate, setSelectedTemplate] = useState<ApplicationTemplate | null>(null);
 
-  const handleAddToLaunchpad = useCallback(
+  const handleAddToSortie = useCallback(
     async (app: Application) => {
       await onAddApp(app);
       setSelectedTemplate(null);
@@ -80,7 +80,7 @@ export function TemplateBrowser({ isOpen, onClose, onAddApp, darkMode }: Templat
             <TemplatePreview
               template={selectedTemplate}
               onBack={handleBackFromPreview}
-              onAddToLaunchpad={handleAddToLaunchpad}
+              onAddToSortie={handleAddToSortie}
               darkMode={darkMode}
             />
           ) : (

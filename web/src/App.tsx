@@ -15,6 +15,7 @@ import {
   isAuthenticated,
   fetchWithAuth
 } from './services/auth';
+import sortieIconWhite from './assets/sortie-icon-white.svg';
 
 function App() {
   const [user, setUser] = useState<User | null>(() => getStoredUser());
@@ -367,22 +368,8 @@ function App() {
         <div className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center">
-                <svg
-                  className="w-6 h-6 text-brand-primary"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"
-                  />
-                </svg>
-              </div>
-              <h1 className="text-2xl font-bold">Launchpad</h1>
+              <img src={sortieIconWhite} alt="Sortie" className="w-10 h-10" />
+              <h1 className="text-2xl font-bold">Sortie</h1>
             </div>
             <div className="flex items-center gap-3">
               <div className="relative">
@@ -864,7 +851,7 @@ function App() {
       <footer className="bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 mt-auto">
         <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
           <p className="text-center text-sm text-gray-500 dark:text-gray-400">
-            Launchpad — Your centralized application launcher
+            Sortie — Your centralized application launcher
           </p>
         </div>
       </footer>

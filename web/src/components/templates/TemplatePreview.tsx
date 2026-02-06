@@ -4,14 +4,14 @@ import type { Application, ApplicationTemplate } from '../../types';
 interface TemplatePreviewProps {
   template: ApplicationTemplate;
   onBack: () => void;
-  onAddToLaunchpad: (app: Application) => Promise<void>;
+  onAddToSortie: (app: Application) => Promise<void>;
   darkMode: boolean;
 }
 
 export function TemplatePreview({
   template,
   onBack,
-  onAddToLaunchpad,
+  onAddToSortie,
   darkMode,
 }: TemplatePreviewProps) {
   const [customId, setCustomId] = useState(`app-${template.template_id}`);
@@ -35,12 +35,12 @@ export function TemplatePreview({
     };
   }, [customId, template]);
 
-  const handleAddToLaunchpad = async () => {
+  const handleAddToSortie = async () => {
     setIsAdding(true);
     setError(null);
     try {
       const app = generateApplication();
-      await onAddToLaunchpad(app);
+      await onAddToSortie(app);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add application');
     } finally {
@@ -224,7 +224,7 @@ export function TemplatePreview({
             placeholder="Enter a unique ID for the application"
           />
           <p className={`mt-1 text-xs ${secondaryTextColor}`}>
-            This ID must be unique among all applications in your Launchpad.
+            This ID must be unique among all applications in your Sortie instance.
           </p>
         </div>
 
@@ -251,11 +251,11 @@ export function TemplatePreview({
           {copySuccess ? 'Copied!' : 'Copy JSON'}
         </button>
         <button
-          onClick={handleAddToLaunchpad}
+          onClick={handleAddToSortie}
           disabled={isAdding || !customId.trim()}
           className="px-4 py-2 rounded-lg bg-brand-primary text-white hover:bg-brand-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {isAdding ? 'Adding...' : 'Add to Launchpad'}
+          {isAdding ? 'Adding...' : 'Add to Sortie'}
         </button>
       </div>
     </div>
