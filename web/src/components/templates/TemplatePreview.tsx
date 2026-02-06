@@ -101,7 +101,7 @@ export function TemplatePreview({
               className="w-12 h-12 object-contain"
               onError={(e) => {
                 (e.target as HTMLImageElement).src =
-                  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23398D9B"><rect width="24" height="24" rx="4"/><text x="12" y="16" text-anchor="middle" fill="white" font-size="12">' +
+                  'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23636A51"><rect width="24" height="24" rx="4"/><text x="12" y="16" text-anchor="middle" fill="white" font-size="12">' +
                   template.name.charAt(0) +
                   '</text></svg>';
               }}
@@ -196,7 +196,7 @@ export function TemplatePreview({
               href={template.documentation_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-sm text-brand-primary hover:text-brand-secondary transition-colors"
+              className="inline-flex items-center gap-2 text-sm text-brand-accent hover:text-brand-accent transition-colors"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -220,7 +220,7 @@ export function TemplatePreview({
             type="text"
             value={customId}
             onChange={(e) => setCustomId(e.target.value)}
-            className={`w-full px-3 py-2 rounded-lg border ${borderColor} ${inputBg} ${textColor} focus:outline-none focus:ring-2 focus:ring-brand-primary`}
+            className={`w-full px-3 py-2 rounded-lg border ${borderColor} ${inputBg} ${textColor} focus:outline-none focus:ring-2 focus:ring-brand-accent`}
             placeholder="Enter a unique ID for the application"
           />
           <p className={`mt-1 text-xs ${secondaryTextColor}`}>
@@ -253,7 +253,7 @@ export function TemplatePreview({
         <button
           onClick={handleAddToSortie}
           disabled={isAdding || !customId.trim()}
-          className="px-4 py-2 rounded-lg bg-brand-primary text-white hover:bg-brand-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="px-4 py-2 rounded-lg bg-brand-accent text-white hover:bg-brand-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isAdding ? 'Adding...' : 'Add to Sortie'}
         </button>

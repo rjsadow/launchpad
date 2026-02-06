@@ -105,7 +105,7 @@ export function Register({ onRegister, onBackToLogin, darkMode }: RegisterProps)
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className={`w-full px-4 py-2 rounded-lg border ${inputBg} ${inputText} focus:outline-none focus:ring-2 focus:ring-brand-primary`}
+              className={`w-full px-4 py-2 rounded-lg border ${inputBg} ${inputText} focus:outline-none focus:ring-2 focus:ring-brand-accent`}
               placeholder="Choose a username"
               autoComplete="username"
               autoFocus
@@ -121,7 +121,7 @@ export function Register({ onRegister, onBackToLogin, darkMode }: RegisterProps)
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className={`w-full px-4 py-2 rounded-lg border ${inputBg} ${inputText} focus:outline-none focus:ring-2 focus:ring-brand-primary`}
+              className={`w-full px-4 py-2 rounded-lg border ${inputBg} ${inputText} focus:outline-none focus:ring-2 focus:ring-brand-accent`}
               placeholder="your@email.com"
               autoComplete="email"
             />
@@ -136,7 +136,7 @@ export function Register({ onRegister, onBackToLogin, darkMode }: RegisterProps)
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              className={`w-full px-4 py-2 rounded-lg border ${inputBg} ${inputText} focus:outline-none focus:ring-2 focus:ring-brand-primary`}
+              className={`w-full px-4 py-2 rounded-lg border ${inputBg} ${inputText} focus:outline-none focus:ring-2 focus:ring-brand-accent`}
               placeholder="Your display name (optional)"
             />
           </div>
@@ -150,7 +150,7 @@ export function Register({ onRegister, onBackToLogin, darkMode }: RegisterProps)
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className={`w-full px-4 py-2 rounded-lg border ${inputBg} ${inputText} focus:outline-none focus:ring-2 focus:ring-brand-primary`}
+              className={`w-full px-4 py-2 rounded-lg border ${inputBg} ${inputText} focus:outline-none focus:ring-2 focus:ring-brand-accent`}
               placeholder="At least 6 characters"
               autoComplete="new-password"
             />
@@ -165,7 +165,7 @@ export function Register({ onRegister, onBackToLogin, darkMode }: RegisterProps)
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className={`w-full px-4 py-2 rounded-lg border ${inputBg} ${inputText} focus:outline-none focus:ring-2 focus:ring-brand-primary`}
+              className={`w-full px-4 py-2 rounded-lg border ${inputBg} ${inputText} focus:outline-none focus:ring-2 focus:ring-brand-accent`}
               placeholder="Confirm your password"
               autoComplete="new-password"
             />
@@ -178,7 +178,7 @@ export function Register({ onRegister, onBackToLogin, darkMode }: RegisterProps)
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2 px-4 bg-brand-primary text-white font-medium rounded-lg hover:bg-brand-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full py-2 px-4 bg-brand-accent text-white font-medium rounded-lg hover:bg-brand-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? 'Creating account...' : 'Create Account'}
           </button>
@@ -189,7 +189,7 @@ export function Register({ onRegister, onBackToLogin, darkMode }: RegisterProps)
             onClick={onBackToLogin}
             className={`text-sm ${darkMode ? 'text-gray-400 hover:text-gray-300' : 'text-gray-600 hover:text-gray-800'}`}
           >
-            Already have an account? <span className="text-brand-primary font-medium">Sign in</span>
+            Already have an account? <span className="text-brand-accent font-medium">Sign in</span>
           </button>
         </div>
       </div>

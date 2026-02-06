@@ -83,7 +83,7 @@ export function Login({ onLogin, onShowRegister, allowRegistration, darkMode }: 
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              className={`w-full px-4 py-2 rounded-lg border ${inputBg} ${inputText} focus:outline-none focus:ring-2 focus:ring-brand-primary`}
+              className={`w-full px-4 py-2 rounded-lg border ${inputBg} ${inputText} focus:outline-none focus:ring-2 focus:ring-brand-accent`}
               placeholder="Enter your username"
               autoComplete="username"
               autoFocus
@@ -99,7 +99,7 @@ export function Login({ onLogin, onShowRegister, allowRegistration, darkMode }: 
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className={`w-full px-4 py-2 rounded-lg border ${inputBg} ${inputText} focus:outline-none focus:ring-2 focus:ring-brand-primary`}
+              className={`w-full px-4 py-2 rounded-lg border ${inputBg} ${inputText} focus:outline-none focus:ring-2 focus:ring-brand-accent`}
               placeholder="Enter your password"
               autoComplete="current-password"
             />
@@ -112,7 +112,7 @@ export function Login({ onLogin, onShowRegister, allowRegistration, darkMode }: 
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2 px-4 bg-brand-primary text-white font-medium rounded-lg hover:bg-brand-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full py-2 px-4 bg-brand-accent text-white font-medium rounded-lg hover:bg-brand-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
@@ -124,7 +124,7 @@ export function Login({ onLogin, onShowRegister, allowRegistration, darkMode }: 
               onClick={onShowRegister}
               className={`text-sm ${darkMode ? 'text-gray-400 hover:text-gray-300' : 'text-gray-600 hover:text-gray-800'}`}
             >
-              Don't have an account? <span className="text-brand-primary font-medium">Register</span>
+              Don't have an account? <span className="text-brand-accent font-medium">Register</span>
             </button>
           </div>
         )}

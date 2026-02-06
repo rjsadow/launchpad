@@ -3,6 +3,7 @@
 @theme {
   --color-brand-primary: #1F2A3C;
   --color-brand-secondary: #2B3445;
+  --color-brand-accent: #636A51;
 }
 
 body {
