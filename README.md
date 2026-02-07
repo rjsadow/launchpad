@@ -37,7 +37,7 @@ cp .env.example .env          # edit to set LAUNCHPAD_JWT_SECRET
 make dev                       # starts frontend (:5173) + backend (:8080)
 ```
 
-Open <http://localhost:5173>, log in with the admin credentials
+Open `http://localhost:5173`, log in with the admin credentials
 from your `.env`, and start adding apps.
 
 ### Run with Kubernetes (container apps)
