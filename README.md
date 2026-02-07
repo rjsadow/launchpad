@@ -1,13 +1,20 @@
 # Sortie
 
-A self-hosted application launcher that gives your organization one portal to access every internal tool. Users browse a catalog, click launch, and get a running desktop app streamed to their browser — no local install required.
+A self-hosted application launcher that gives your organization
+one portal to access every internal tool. Users browse a catalog,
+click launch, and get a running desktop app streamed to their
+browser — no local install required.
 
 <!-- TODO: Replace with actual screenshot -->
 ![Dashboard Screenshot](docs/images/dashboard-placeholder.png)
 
 ## The Problem
 
-Teams juggle dozens of internal tools across scattered bookmarks, wikis, and Slack messages. Installing desktop software on every workstation is slow and hard to manage. Sortie solves both: a single web page lists every app, and containerized apps run in Kubernetes so users just need a browser.
+Teams juggle dozens of internal tools across scattered bookmarks,
+wikis, and Slack messages. Installing desktop software on every
+workstation is slow and hard to manage. Sortie solves both: a
+single web page lists every app, and containerized apps run in
+Kubernetes so users just need a browser.
 
 ## Core Concepts
 
@@ -33,7 +40,8 @@ cp .env.example .env          # edit to set LAUNCHPAD_JWT_SECRET
 make dev                       # starts frontend (:5173) + backend (:8080)
 ```
 
-Open http://localhost:5173, log in with the admin credentials from your `.env`, and start adding apps.
+Open <http://localhost:5173>, log in with the admin credentials
+from your `.env`, and start adding apps.
 
 ### Run with Kubernetes (container apps)
 
@@ -59,7 +67,7 @@ docker run -p 8080:8080 \
 
 ## How It Works
 
-```
+```text
 Browser ──▶ Sortie (Go server) ──▶ Kubernetes API
   │              │                       │
   │  static UI   │  REST API             │  creates pod +
@@ -70,7 +78,10 @@ Browser ──▶ Sortie (Go server) ──▶ Kubernetes API
 
 1. User picks an app from the dashboard.
 2. For **URL apps**, Sortie opens the link in a new tab.
-3. For **container apps**, Sortie creates a Kubernetes pod with the app image and a VNC (Linux) or Guacamole/RDP (Windows) sidecar, then streams the desktop to the browser over WebSocket.
+3. For **container apps**, Sortie creates a Kubernetes pod with
+   the app image and a VNC (Linux) or Guacamole/RDP (Windows)
+   sidecar, then streams the desktop to the browser over
+   WebSocket.
 4. Sessions auto-expire after a configurable timeout (default 2 hours).
 
 ## Tech Stack
@@ -99,7 +110,7 @@ See `.env.example` for the full list.
 
 ## Project Layout
 
-```
+```text
 main.go              Server entry point and HTTP routing
 internal/
   config/            Configuration loading
