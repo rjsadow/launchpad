@@ -66,6 +66,10 @@ type Config struct {
 	DefaultCPULimit    string // Default CPU limit for sessions (e.g., "2")
 	DefaultMemRequest  string // Default memory request for sessions (e.g., "512Mi")
 	DefaultMemLimit    string // Default memory limit for sessions (e.g., "2Gi")
+
+	// Session recording configuration
+	SessionRecordingEnabled bool   // Whether session recording hooks are enabled (default: false)
+	SessionRecordingDriver  string // Recording driver name (for future use: "file", "webhook", "s3")
 }
 
 // ValidationError represents a configuration validation error.
@@ -464,6 +468,14 @@ func (c *Config) loadFromEnv() error {
 
 	if v := os.Getenv("LAUNCHPAD_DEFAULT_MEM_LIMIT"); v != "" {
 		c.DefaultMemLimit = v
+	}
+
+	// Session recording configuration
+	if v := os.Getenv("LAUNCHPAD_SESSION_RECORDING_ENABLED"); v != "" {
+		c.SessionRecordingEnabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("LAUNCHPAD_SESSION_RECORDING_DRIVER"); v != "" {
+		c.SessionRecordingDriver = v
 	}
 
 	if len(parseErrors) > 0 {
