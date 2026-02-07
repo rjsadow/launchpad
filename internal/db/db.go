@@ -129,6 +129,45 @@ type Session struct {
 	UpdatedAt time.Time     `json:"updated_at"`
 }
 
+// EnvVar represents an environment variable for a container application
+type EnvVar struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// VolumeMount represents a volume to mount in the container
+type VolumeMount struct {
+	Name      string `json:"name"`
+	MountPath string `json:"mount_path"`
+	Size      string `json:"size,omitempty"`
+	ReadOnly  bool   `json:"read_only,omitempty"`
+}
+
+// NetworkRule represents a network access rule
+type NetworkRule struct {
+	Direction string `json:"direction"` // "ingress" or "egress"
+	Port      int    `json:"port"`
+	Protocol  string `json:"protocol"`             // "TCP" or "UDP"
+	CIDRBlock string `json:"cidr_block,omitempty"` // e.g., "10.0.0.0/8"
+}
+
+// AppSpec represents a complete application definition for deployment
+type AppSpec struct {
+	ID           string          `json:"id"`
+	Name         string          `json:"name"`
+	Image        string          `json:"image"`
+	TemplateRef  string          `json:"template_ref,omitempty"`
+	Command      []string        `json:"command,omitempty"`
+	Args         []string        `json:"args,omitempty"`
+	Env          []EnvVar        `json:"env,omitempty"`
+	Resources    *ResourceLimits `json:"resources,omitempty"`
+	Volumes      []VolumeMount   `json:"volumes,omitempty"`
+	NetworkRules []NetworkRule   `json:"network_rules,omitempty"`
+	Port         int             `json:"port,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
+}
+
 // DB wraps the sql.DB connection
 type DB struct {
 	conn *sql.DB
@@ -272,6 +311,26 @@ func (db *DB) migrate() error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_templates_template_id ON templates(template_id);
 	CREATE INDEX IF NOT EXISTS idx_templates_category ON templates(template_category);
+
+	CREATE TABLE IF NOT EXISTS app_specs (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		image TEXT NOT NULL DEFAULT '',
+		template_ref TEXT DEFAULT '',
+		command TEXT DEFAULT '[]',
+		args TEXT DEFAULT '[]',
+		env TEXT DEFAULT '[]',
+		cpu_request TEXT DEFAULT '',
+		cpu_limit TEXT DEFAULT '',
+		memory_request TEXT DEFAULT '',
+		memory_limit TEXT DEFAULT '',
+		volumes TEXT DEFAULT '[]',
+		network_rules TEXT DEFAULT '[]',
+		port INTEGER DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_app_specs_name ON app_specs(name);
 	`
 	_, err := db.conn.Exec(schema)
 	if err != nil {
@@ -1282,5 +1341,250 @@ func (db *DB) SeedTemplatesFromData(data []byte) error {
 		}
 	}
 
+	return nil
+}
+
+// CreateAppSpec inserts a new application spec
+func (db *DB) CreateAppSpec(spec AppSpec) error {
+	commandJSON := "[]"
+	if len(spec.Command) > 0 {
+		if b, err := json.Marshal(spec.Command); err == nil {
+			commandJSON = string(b)
+		}
+	}
+	argsJSON := "[]"
+	if len(spec.Args) > 0 {
+		if b, err := json.Marshal(spec.Args); err == nil {
+			argsJSON = string(b)
+		}
+	}
+	envJSON := "[]"
+	if len(spec.Env) > 0 {
+		if b, err := json.Marshal(spec.Env); err == nil {
+			envJSON = string(b)
+		}
+	}
+	volumesJSON := "[]"
+	if len(spec.Volumes) > 0 {
+		if b, err := json.Marshal(spec.Volumes); err == nil {
+			volumesJSON = string(b)
+		}
+	}
+	networkRulesJSON := "[]"
+	if len(spec.NetworkRules) > 0 {
+		if b, err := json.Marshal(spec.NetworkRules); err == nil {
+			networkRulesJSON = string(b)
+		}
+	}
+
+	var cpuRequest, cpuLimit, memoryRequest, memoryLimit string
+	if spec.Resources != nil {
+		cpuRequest = spec.Resources.CPURequest
+		cpuLimit = spec.Resources.CPULimit
+		memoryRequest = spec.Resources.MemoryRequest
+		memoryLimit = spec.Resources.MemoryLimit
+	}
+
+	now := time.Now()
+	_, err := db.conn.Exec(
+		`INSERT INTO app_specs (id, name, image, template_ref, command, args, env, cpu_request, cpu_limit, memory_request, memory_limit, volumes, network_rules, port, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		spec.ID, spec.Name, spec.Image, spec.TemplateRef,
+		commandJSON, argsJSON, envJSON,
+		cpuRequest, cpuLimit, memoryRequest, memoryLimit,
+		volumesJSON, networkRulesJSON, spec.Port, now, now,
+	)
+	return err
+}
+
+// GetAppSpec returns a single application spec by ID
+func (db *DB) GetAppSpec(id string) (*AppSpec, error) {
+	var spec AppSpec
+	var commandJSON, argsJSON, envJSON, volumesJSON, networkRulesJSON string
+	var cpuRequest, cpuLimit, memoryRequest, memoryLimit string
+
+	err := db.conn.QueryRow(
+		`SELECT id, name, image, template_ref, command, args, env, cpu_request, cpu_limit, memory_request, memory_limit, volumes, network_rules, port, created_at, updated_at
+		FROM app_specs WHERE id = ?`, id,
+	).Scan(
+		&spec.ID, &spec.Name, &spec.Image, &spec.TemplateRef,
+		&commandJSON, &argsJSON, &envJSON,
+		&cpuRequest, &cpuLimit, &memoryRequest, &memoryLimit,
+		&volumesJSON, &networkRulesJSON, &spec.Port,
+		&spec.CreatedAt, &spec.UpdatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Deserialize JSON fields
+	if commandJSON != "" && commandJSON != "[]" {
+		json.Unmarshal([]byte(commandJSON), &spec.Command)
+	}
+	if argsJSON != "" && argsJSON != "[]" {
+		json.Unmarshal([]byte(argsJSON), &spec.Args)
+	}
+	if envJSON != "" && envJSON != "[]" {
+		json.Unmarshal([]byte(envJSON), &spec.Env)
+	}
+	if volumesJSON != "" && volumesJSON != "[]" {
+		json.Unmarshal([]byte(volumesJSON), &spec.Volumes)
+	}
+	if networkRulesJSON != "" && networkRulesJSON != "[]" {
+		json.Unmarshal([]byte(networkRulesJSON), &spec.NetworkRules)
+	}
+	if cpuRequest != "" || cpuLimit != "" || memoryRequest != "" || memoryLimit != "" {
+		spec.Resources = &ResourceLimits{
+			CPURequest:    cpuRequest,
+			CPULimit:      cpuLimit,
+			MemoryRequest: memoryRequest,
+			MemoryLimit:   memoryLimit,
+		}
+	}
+
+	return &spec, nil
+}
+
+// ListAppSpecs returns all application specs
+func (db *DB) ListAppSpecs() ([]AppSpec, error) {
+	rows, err := db.conn.Query(
+		`SELECT id, name, image, template_ref, command, args, env, cpu_request, cpu_limit, memory_request, memory_limit, volumes, network_rules, port, created_at, updated_at
+		FROM app_specs ORDER BY name`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var specs []AppSpec
+	for rows.Next() {
+		var spec AppSpec
+		var commandJSON, argsJSON, envJSON, volumesJSON, networkRulesJSON string
+		var cpuRequest, cpuLimit, memoryRequest, memoryLimit string
+
+		if err := rows.Scan(
+			&spec.ID, &spec.Name, &spec.Image, &spec.TemplateRef,
+			&commandJSON, &argsJSON, &envJSON,
+			&cpuRequest, &cpuLimit, &memoryRequest, &memoryLimit,
+			&volumesJSON, &networkRulesJSON, &spec.Port,
+			&spec.CreatedAt, &spec.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+
+		if commandJSON != "" && commandJSON != "[]" {
+			json.Unmarshal([]byte(commandJSON), &spec.Command)
+		}
+		if argsJSON != "" && argsJSON != "[]" {
+			json.Unmarshal([]byte(argsJSON), &spec.Args)
+		}
+		if envJSON != "" && envJSON != "[]" {
+			json.Unmarshal([]byte(envJSON), &spec.Env)
+		}
+		if volumesJSON != "" && volumesJSON != "[]" {
+			json.Unmarshal([]byte(volumesJSON), &spec.Volumes)
+		}
+		if networkRulesJSON != "" && networkRulesJSON != "[]" {
+			json.Unmarshal([]byte(networkRulesJSON), &spec.NetworkRules)
+		}
+		if cpuRequest != "" || cpuLimit != "" || memoryRequest != "" || memoryLimit != "" {
+			spec.Resources = &ResourceLimits{
+				CPURequest:    cpuRequest,
+				CPULimit:      cpuLimit,
+				MemoryRequest: memoryRequest,
+				MemoryLimit:   memoryLimit,
+			}
+		}
+
+		specs = append(specs, spec)
+	}
+
+	return specs, rows.Err()
+}
+
+// UpdateAppSpec updates an existing application spec
+func (db *DB) UpdateAppSpec(spec AppSpec) error {
+	commandJSON := "[]"
+	if len(spec.Command) > 0 {
+		if b, err := json.Marshal(spec.Command); err == nil {
+			commandJSON = string(b)
+		}
+	}
+	argsJSON := "[]"
+	if len(spec.Args) > 0 {
+		if b, err := json.Marshal(spec.Args); err == nil {
+			argsJSON = string(b)
+		}
+	}
+	envJSON := "[]"
+	if len(spec.Env) > 0 {
+		if b, err := json.Marshal(spec.Env); err == nil {
+			envJSON = string(b)
+		}
+	}
+	volumesJSON := "[]"
+	if len(spec.Volumes) > 0 {
+		if b, err := json.Marshal(spec.Volumes); err == nil {
+			volumesJSON = string(b)
+		}
+	}
+	networkRulesJSON := "[]"
+	if len(spec.NetworkRules) > 0 {
+		if b, err := json.Marshal(spec.NetworkRules); err == nil {
+			networkRulesJSON = string(b)
+		}
+	}
+
+	var cpuRequest, cpuLimit, memoryRequest, memoryLimit string
+	if spec.Resources != nil {
+		cpuRequest = spec.Resources.CPURequest
+		cpuLimit = spec.Resources.CPULimit
+		memoryRequest = spec.Resources.MemoryRequest
+		memoryLimit = spec.Resources.MemoryLimit
+	}
+
+	result, err := db.conn.Exec(
+		`UPDATE app_specs SET name = ?, image = ?, template_ref = ?, command = ?, args = ?, env = ?,
+		cpu_request = ?, cpu_limit = ?, memory_request = ?, memory_limit = ?,
+		volumes = ?, network_rules = ?, port = ?, updated_at = ?
+		WHERE id = ?`,
+		spec.Name, spec.Image, spec.TemplateRef,
+		commandJSON, argsJSON, envJSON,
+		cpuRequest, cpuLimit, memoryRequest, memoryLimit,
+		volumesJSON, networkRulesJSON, spec.Port,
+		time.Now(), spec.ID,
+	)
+	if err != nil {
+		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// DeleteAppSpec removes an application spec by ID
+func (db *DB) DeleteAppSpec(id string) error {
+	result, err := db.conn.Exec("DELETE FROM app_specs WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
 	return nil
 }

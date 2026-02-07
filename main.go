@@ -178,6 +178,10 @@ func main() {
 	mux.Handle("/api/analytics/launch", authMiddleware(http.HandlerFunc(handleAnalyticsLaunch)))
 	mux.Handle("/api/analytics/stats", authMiddleware(http.HandlerFunc(handleAnalyticsStats)))
 
+	// AppSpec API routes (protected, admin-only for mutations)
+	mux.Handle("/api/appspecs", authMiddleware(http.HandlerFunc(handleAppSpecs)))
+	mux.Handle("/api/appspecs/", authMiddleware(http.HandlerFunc(handleAppSpecByID)))
+
 	// Session API routes (protected)
 	mux.Handle("/api/sessions", authMiddleware(http.HandlerFunc(handleSessions)))
 	mux.Handle("/api/sessions/", authMiddleware(http.HandlerFunc(handleSessionByID)))
@@ -424,6 +428,162 @@ func handleAppByID(w http.ResponseWriter, r *http.Request) {
 		// Log the action
 		details := fmt.Sprintf("Deleted app: %s (%s)", app.Name, id)
 		database.LogAudit("admin", "DELETE_APP", details)
+
+		w.WriteHeader(http.StatusNoContent)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleAppSpecs handles GET and POST for /api/appspecs
+func handleAppSpecs(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		specs, err := database.ListAppSpecs()
+		if err != nil {
+			slog.Error("error listing app specs", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		if specs == nil {
+			specs = []db.AppSpec{}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(specs)
+
+	case http.MethodPost:
+		var spec db.AppSpec
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Failed to read request body", http.StatusBadRequest)
+			return
+		}
+
+		if err := json.Unmarshal(body, &spec); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if spec.ID == "" || spec.Name == "" {
+			http.Error(w, "Missing required fields: id, name", http.StatusBadRequest)
+			return
+		}
+
+		if spec.Image == "" && spec.TemplateRef == "" {
+			http.Error(w, "Either image or template_ref is required", http.StatusBadRequest)
+			return
+		}
+
+		if err := database.CreateAppSpec(spec); err != nil {
+			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+				http.Error(w, "AppSpec with this ID already exists", http.StatusConflict)
+				return
+			}
+			slog.Error("error creating app spec", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		details := fmt.Sprintf("Created app spec: %s (%s)", spec.Name, spec.ID)
+		database.LogAudit("admin", "CREATE_APPSPEC", details)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(spec)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleAppSpecByID handles GET, PUT, DELETE for /api/appspecs/{id}
+func handleAppSpecByID(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/appspecs/")
+	if id == "" {
+		http.Error(w, "Missing app spec ID", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		spec, err := database.GetAppSpec(id)
+		if err != nil {
+			slog.Error("error getting app spec", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		if spec == nil {
+			http.Error(w, "App spec not found", http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(spec)
+
+	case http.MethodPut:
+		var spec db.AppSpec
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Failed to read request body", http.StatusBadRequest)
+			return
+		}
+
+		if err := json.Unmarshal(body, &spec); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		spec.ID = id
+
+		if spec.Name == "" {
+			http.Error(w, "Missing required field: name", http.StatusBadRequest)
+			return
+		}
+
+		if spec.Image == "" && spec.TemplateRef == "" {
+			http.Error(w, "Either image or template_ref is required", http.StatusBadRequest)
+			return
+		}
+
+		if err := database.UpdateAppSpec(spec); err != nil {
+			if err.Error() == "sql: no rows in result set" {
+				http.Error(w, "App spec not found", http.StatusNotFound)
+				return
+			}
+			slog.Error("error updating app spec", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		details := fmt.Sprintf("Updated app spec: %s (%s)", spec.Name, spec.ID)
+		database.LogAudit("admin", "UPDATE_APPSPEC", details)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(spec)
+
+	case http.MethodDelete:
+		spec, err := database.GetAppSpec(id)
+		if err != nil {
+			slog.Error("error getting app spec", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		if spec == nil {
+			http.Error(w, "App spec not found", http.StatusNotFound)
+			return
+		}
+
+		if err := database.DeleteAppSpec(id); err != nil {
+			slog.Error("error deleting app spec", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		details := fmt.Sprintf("Deleted app spec: %s (%s)", spec.Name, id)
+		database.LogAudit("admin", "DELETE_APPSPEC", details)
 
 		w.WriteHeader(http.StatusNoContent)
 
