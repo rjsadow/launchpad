@@ -92,7 +92,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Starting Guacamole proxy for session %s to guacd at %s", sessionID, guacdAddr)
 
 	if err := proxy.Serve(clientConn); err != nil {
-		if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+		if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseNoStatusReceived) {
 			log.Printf("Guacamole proxy error for session %s: %v", sessionID, err)
 		}
 	}

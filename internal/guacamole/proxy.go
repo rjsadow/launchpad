@@ -159,6 +159,7 @@ func (p *GuacdProxy) buildConnectArgs(argNames []string) []string {
 		"security":      "rdp",
 		"ignore-cert":   "true",
 		"disable-auth":  "true",
+		"resize-method": "display-update",
 	}
 
 	result := make([]string, len(argNames))
@@ -177,10 +178,13 @@ func (p *GuacdProxy) relayWSToTCP(ws *websocket.Conn, tcp net.Conn) error {
 	for {
 		_, message, err := ws.ReadMessage()
 		if err != nil {
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) || err == io.EOF {
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseNoStatusReceived) || err == io.EOF {
 				return nil
 			}
 			return err
+		}
+		if len(message) == 0 {
+			continue
 		}
 		if _, err := tcp.Write(message); err != nil {
 			return err

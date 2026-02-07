@@ -16,8 +16,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN sed -i 's/^port=3389/port=3389/' /etc/xrdp/xrdp.ini && \
     sed -i 's/^security_layer=.*/security_layer=rdp/' /etc/xrdp/xrdp.ini && \
     sed -i 's/^crypt_level=.*/crypt_level=none/' /etc/xrdp/xrdp.ini && \
-    # Allow any user to connect without password
-    sed -i 's/^max_bpp=.*/max_bpp=24/' /etc/xrdp/xrdp.ini
+    sed -i 's/^max_bpp=.*/max_bpp=24/' /etc/xrdp/xrdp.ini && \
+    # Auto-login: skip the xrdp login screen when credentials are provided via RDP
+    sed -i '/^\[Globals\]/,/^\[/ s/^#autorun=.*/autorun=Xorg/' /etc/xrdp/xrdp.ini && \
+    # If autorun line doesn't exist, add it after [Globals]
+    grep -q '^autorun=' /etc/xrdp/xrdp.ini || sed -i '/^\[Globals\]/a autorun=Xorg' /etc/xrdp/xrdp.ini
 
 # Create a test user
 RUN useradd -m -s /bin/bash testuser && \
