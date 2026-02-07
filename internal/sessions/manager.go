@@ -38,6 +38,10 @@ type ManagerConfig struct {
 	DefaultCPULimit    string // Default CPU limit for new sessions
 	DefaultMemRequest  string // Default memory request for new sessions
 	DefaultMemLimit    string // Default memory limit for new sessions
+
+	// Session recording settings
+	Recording RecordingConfig
+	Recorder  SessionRecorder // If nil, NoopRecorder is used
 }
 
 // Manager handles session lifecycle
@@ -54,6 +58,10 @@ type Manager struct {
 	defaultCPULimit    string
 	defaultMemRequest  string
 	defaultMemLimit    string
+
+	// Session recording
+	recording RecordingConfig
+	recorder  SessionRecorder
 
 	mu       sync.RWMutex
 	stopCh   chan struct{}
@@ -83,6 +91,11 @@ func NewManagerWithConfig(database *db.DB, cfg ManagerConfig) *Manager {
 		cfg.PodReadyTimeout = DefaultPodReadyTimeout
 	}
 
+	recorder := cfg.Recorder
+	if recorder == nil {
+		recorder = &NoopRecorder{}
+	}
+
 	return &Manager{
 		db:                 database,
 		sessionTimeout:     cfg.SessionTimeout,
@@ -94,6 +107,8 @@ func NewManagerWithConfig(database *db.DB, cfg ManagerConfig) *Manager {
 		defaultCPULimit:    cfg.DefaultCPULimit,
 		defaultMemRequest:  cfg.DefaultMemRequest,
 		defaultMemLimit:    cfg.DefaultMemLimit,
+		recording:          cfg.Recording,
+		recorder:           recorder,
 		stopCh:             make(chan struct{}),
 		sessions:           make(map[string]*db.Session),
 	}
@@ -102,12 +117,38 @@ func NewManagerWithConfig(database *db.DB, cfg ManagerConfig) *Manager {
 // Start begins the background cleanup goroutine
 func (m *Manager) Start() {
 	go m.cleanupLoop()
-	log.Printf("Session manager started (timeout: %v, cleanup interval: %v)", m.sessionTimeout, m.cleanupInterval)
+	log.Printf("Session manager started (timeout: %v, cleanup interval: %v, recording: %v)", m.sessionTimeout, m.cleanupInterval, m.recording.Enabled)
 }
 
-// Stop stops the background cleanup goroutine
+// Stop stops the background cleanup goroutine and closes the recorder.
 func (m *Manager) Stop() {
 	close(m.stopCh)
+	if err := m.recorder.Close(); err != nil {
+		log.Printf("Error closing session recorder: %v", err)
+	}
+}
+
+// emitEvent sends a session lifecycle event to the recorder.
+// If recording is disabled or the recorder returns an error, the error is
+// logged but does not affect session operations.
+func (m *Manager) emitEvent(ctx context.Context, eventType SessionEventType, session *db.Session, reason string) {
+	if !m.recording.Enabled {
+		return
+	}
+
+	event := SessionEvent{
+		Type:      eventType,
+		SessionID: session.ID,
+		UserID:    session.UserID,
+		AppID:     session.AppID,
+		Status:    session.Status,
+		Reason:    reason,
+		Timestamp: time.Now(),
+	}
+
+	if err := m.recorder.OnEvent(ctx, event); err != nil {
+		log.Printf("Session recorder error for %s event on session %s: %v", eventType, session.ID, err)
+	}
 }
 
 // cleanupLoop periodically cleans up stale sessions
@@ -317,6 +358,9 @@ func (m *Manager) CreateSession(ctx context.Context, req *CreateSessionRequest) 
 	m.sessions[sessionID] = session
 	m.mu.Unlock()
 
+	// Emit recording event
+	m.emitEvent(ctx, SessionEventCreated, session, "session created")
+
 	// Start goroutine to wait for pod ready and update session
 	go m.waitForPodReady(sessionID, createdPod.Name)
 
@@ -330,8 +374,16 @@ func (m *Manager) waitForPodReady(sessionID, podName string) {
 
 	// Wait for pod to be ready
 	if err := k8s.WaitForPodReady(ctx, podName, m.podReadyTimeout); err != nil {
-		LogTransition(sessionID, db.SessionStatusCreating, db.SessionStatusFailed, fmt.Sprintf("pod failed to become ready: %v", err))
+		failReason := fmt.Sprintf("pod failed to become ready: %v", err)
+		LogTransition(sessionID, db.SessionStatusCreating, db.SessionStatusFailed, failReason)
 		m.db.UpdateSessionStatus(sessionID, db.SessionStatusFailed)
+		m.mu.RLock()
+		if session, ok := m.sessions[sessionID]; ok {
+			m.mu.RUnlock()
+			m.emitEvent(context.Background(), SessionEventFailed, session, failReason)
+		} else {
+			m.mu.RUnlock()
+		}
 		if delErr := k8s.DeletePod(context.Background(), podName); delErr != nil {
 			log.Printf("Failed to delete pod %s after timeout: %v", podName, delErr)
 		}
@@ -341,8 +393,16 @@ func (m *Manager) waitForPodReady(sessionID, podName string) {
 	// Get pod IP
 	podIP, err := k8s.GetPodIP(ctx, podName)
 	if err != nil {
-		LogTransition(sessionID, db.SessionStatusCreating, db.SessionStatusFailed, fmt.Sprintf("failed to get pod IP: %v", err))
+		failReason := fmt.Sprintf("failed to get pod IP: %v", err)
+		LogTransition(sessionID, db.SessionStatusCreating, db.SessionStatusFailed, failReason)
 		m.db.UpdateSessionStatus(sessionID, db.SessionStatusFailed)
+		m.mu.RLock()
+		if session, ok := m.sessions[sessionID]; ok {
+			m.mu.RUnlock()
+			m.emitEvent(context.Background(), SessionEventFailed, session, failReason)
+		} else {
+			m.mu.RUnlock()
+		}
 		if delErr := k8s.DeletePod(context.Background(), podName); delErr != nil {
 			log.Printf("Failed to delete pod %s after IP lookup failure: %v", podName, delErr)
 		}
@@ -355,13 +415,16 @@ func (m *Manager) waitForPodReady(sessionID, podName string) {
 		log.Printf("Failed to update session for %s: %v", sessionID, err)
 	}
 
-	// Update cache
+	// Update cache and emit recording event
 	m.mu.Lock()
 	if session, ok := m.sessions[sessionID]; ok {
 		session.PodIP = podIP
 		session.Status = db.SessionStatusRunning
+		m.mu.Unlock()
+		m.emitEvent(context.Background(), SessionEventReady, session, "pod ready")
+	} else {
+		m.mu.Unlock()
 	}
-	m.mu.Unlock()
 }
 
 // GetSession returns a session by ID
@@ -433,6 +496,10 @@ func (m *Manager) StopSession(ctx context.Context, sessionID string) error {
 		s.PodIP = ""
 	}
 	m.mu.Unlock()
+
+	// Emit recording event
+	session.Status = db.SessionStatusStopped
+	m.emitEvent(ctx, SessionEventStopped, session, "user stopped")
 
 	return nil
 }
@@ -507,6 +574,9 @@ func (m *Manager) RestartSession(ctx context.Context, sessionID string) (*db.Ses
 	m.sessions[sessionID] = session
 	m.mu.Unlock()
 
+	// Emit recording event
+	m.emitEvent(ctx, SessionEventRestarted, session, "user restarted")
+
 	// Wait for pod ready in background
 	go m.waitForPodReady(sessionID, createdPod.Name)
 
@@ -553,6 +623,14 @@ func (m *Manager) terminateWithStatus(ctx context.Context, sessionID string, fin
 	if err := m.db.UpdateSessionStatus(sessionID, finalStatus); err != nil {
 		return fmt.Errorf("failed to update session status: %w", err)
 	}
+
+	// Emit recording event before removing from cache
+	eventType := SessionEventTerminated
+	if finalStatus == db.SessionStatusExpired {
+		eventType = SessionEventExpired
+	}
+	session.Status = finalStatus
+	m.emitEvent(ctx, eventType, session, reason)
 
 	// Remove from cache
 	m.mu.Lock()

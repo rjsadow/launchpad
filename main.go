@@ -155,6 +155,10 @@ func main() {
 		DefaultCPULimit:    appConfig.DefaultCPULimit,
 		DefaultMemRequest:  appConfig.DefaultMemRequest,
 		DefaultMemLimit:    appConfig.DefaultMemLimit,
+		Recording: sessions.RecordingConfig{
+			Enabled: appConfig.SessionRecordingEnabled,
+			Driver:  appConfig.SessionRecordingDriver,
+		},
 	})
 	sessionManager.Start()
 	defer sessionManager.Stop()
