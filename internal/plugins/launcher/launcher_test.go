@@ -42,18 +42,18 @@ func TestReExportedConstants(t *testing.T) {
 func TestReExportedTypes(t *testing.T) {
 	// Verify type aliases work correctly
 	var lt LaunchType = "url"
-	var plt plugins.LaunchType = lt
+	plt := lt
 	if plt != plugins.LaunchTypeURL {
 		t.Errorf("LaunchType alias mismatch: %q != %q", plt, plugins.LaunchTypeURL)
 	}
 
 	var ls LaunchStatus = "running"
-	var pls plugins.LaunchStatus = ls
+	pls := ls
 	if pls != plugins.LaunchStatusRunning {
 		t.Errorf("LaunchStatus alias mismatch: %q != %q", pls, plugins.LaunchStatusRunning)
 	}
 
 	// Verify struct type aliases
-	var _ LaunchRequest = plugins.LaunchRequest{}
-	var _ LaunchResult = plugins.LaunchResult{}
+	var _ = plugins.LaunchRequest{}
+	var _ = plugins.LaunchResult{}
 }
