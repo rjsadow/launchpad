@@ -1,19 +1,30 @@
 # Network Egress Rules
 
-Launchpad supports per-application network egress policies to control what network destinations session pods can reach. This provides defense-in-depth by restricting outbound connections from containerized sessions.
+Launchpad supports per-application network egress policies
+to control what network destinations session pods can reach.
+This provides defense-in-depth by restricting outbound
+connections from containerized sessions.
 
 ## Overview
 
-Each application can have an **egress policy** that defines what outbound network traffic is allowed from its session pods. Two modes are supported:
+Each application can have an **egress policy** that defines
+what outbound network traffic is allowed from its session
+pods. Two modes are supported:
 
-- **Allowlist** (recommended): Only explicitly listed destinations are permitted. All other egress traffic is blocked (except DNS).
-- **Denylist**: All egress traffic is permitted except explicitly listed destinations.
+- **Allowlist** (recommended): Only explicitly listed
+  destinations are permitted. All other egress traffic is
+  blocked (except DNS).
+- **Denylist**: All egress traffic is permitted except
+  explicitly listed destinations.
 
-When no egress policy is configured, sessions inherit the cluster-level default NetworkPolicy (which typically allows DNS + HTTP/HTTPS to any destination).
+When no egress policy is configured, sessions inherit the
+cluster-level default NetworkPolicy (which typically allows
+DNS + HTTP/HTTPS to any destination).
 
 ## Configuration
 
-Egress policies are configured per-application via the API when creating or updating an application.
+Egress policies are configured per-application via the API
+when creating or updating an application.
 
 ### Data Model
 
@@ -48,7 +59,8 @@ Egress policies are configured per-application via the API when creating or upda
 
 ### API Examples
 
-**Create an app with allowlist egress (only HTTPS to specific subnets):**
+**Create an app with allowlist egress (only HTTPS to
+specific subnets):**
 
 ```bash
 curl -X POST /api/apps \
@@ -69,7 +81,8 @@ curl -X POST /api/apps \
   }'
 ```
 
-**Create an app with denylist egress (block internal networks):**
+**Create an app with denylist egress (block internal
+networks):**
 
 ```bash
 curl -X POST /api/apps \
@@ -107,43 +120,63 @@ curl -X POST /api/apps \
 
 ## Enforcement
 
-Egress rules are enforced using Kubernetes [NetworkPolicies](https://kubernetes.io/docs/concepts/services-networking/network-policies/). When a session is created for an app with an egress policy:
+Egress rules are enforced using Kubernetes
+[NetworkPolicies][np]. When a session is created for an
+app with an egress policy:
+
+[np]: https://kubernetes.io/docs/concepts/services-networking/network-policies/
 
 1. A pod is created for the session (as usual).
-2. A per-session `NetworkPolicy` named `launchpad-egress-{session-id}` is created.
-3. The policy targets only the session pod via label selectors.
-4. When the session is terminated, the NetworkPolicy is automatically cleaned up.
+2. A per-session `NetworkPolicy` named
+   `launchpad-egress-{session-id}` is created.
+3. The policy targets only the session pod via label
+   selectors.
+4. When the session is terminated, the NetworkPolicy is
+   automatically cleaned up.
 
 ### Allowlist Mode
 
 Creates a NetworkPolicy that permits:
+
 - DNS traffic (UDP/TCP port 53) — always allowed
 - Each rule becomes an explicit egress allow entry
 
-All other egress traffic is implicitly denied by the NetworkPolicy.
+All other egress traffic is implicitly denied by the
+NetworkPolicy.
 
 ### Denylist Mode
 
 Creates a NetworkPolicy that permits:
-- DNS traffic (UDP/TCP port 53) — always allowed
-- All traffic to `0.0.0.0/0` **except** the listed CIDRs (using `ipBlock.except`)
 
-**Note:** Kubernetes `ipBlock.except` works at the CIDR level only. Port-level denylist filtering is not supported by K8s NetworkPolicies. For port-level control, use allowlist mode.
+- DNS traffic (UDP/TCP port 53) — always allowed
+- All traffic to `0.0.0.0/0` **except** the listed
+  CIDRs (using `ipBlock.except`)
+
+**Note:** Kubernetes `ipBlock.except` works at the CIDR
+level only. Port-level denylist filtering is not supported
+by K8s NetworkPolicies. For port-level control, use
+allowlist mode.
 
 ## Prerequisites
 
 ### CNI Plugin
 
-Your Kubernetes cluster must have a CNI plugin that supports NetworkPolicies. Common options:
+Your Kubernetes cluster must have a CNI plugin that
+supports NetworkPolicies. Common options:
+
 - **Calico** (recommended)
 - **Cilium**
 - **Weave Net**
 
-Clusters using basic `kubenet` or `flannel` (without Calico) do **not** enforce NetworkPolicies — the policies will be created but have no effect.
+Clusters using basic `kubenet` or `flannel` (without
+Calico) do **not** enforce NetworkPolicies — the policies
+will be created but have no effect.
 
 ### RBAC
 
-The Launchpad service account needs permission to manage NetworkPolicies. This is included in the Helm chart and deploy manifests:
+The Launchpad service account needs permission to manage
+NetworkPolicies. This is included in the Helm chart and
+deploy manifests:
 
 ```yaml
 - apiGroups: ["networking.k8s.io"]
@@ -153,15 +186,30 @@ The Launchpad service account needs permission to manage NetworkPolicies. This i
 
 ## Cluster-Level Defaults
 
-The Helm chart includes a default NetworkPolicy for session pods that allows:
-- **Ingress**: Only from the Launchpad server on VNC/RDP/proxy ports
+The Helm chart includes a default NetworkPolicy for
+session pods that allows:
+
+- **Ingress**: Only from the Launchpad server on
+  VNC/RDP/proxy ports
 - **Egress**: DNS + HTTP/HTTPS to any destination
 
-Per-app egress policies create **additional** NetworkPolicies. Since Kubernetes NetworkPolicies are additive (union), the per-app policy will be the effective policy when it is more restrictive than the cluster default. For maximum control, configure the cluster-level session egress to be restrictive (e.g., DNS only) and use per-app allowlists to grant access.
+Per-app egress policies create **additional**
+NetworkPolicies. Since Kubernetes NetworkPolicies are
+additive (union), the per-app policy will be the effective
+policy when it is more restrictive than the cluster
+default. For maximum control, configure the cluster-level
+session egress to be restrictive (e.g., DNS only) and use
+per-app allowlists to grant access.
 
 ## Limitations
 
-- **Denylist port filtering**: K8s NetworkPolicies cannot deny specific ports while allowing others. Use allowlist mode for port-level control.
-- **Domain-based rules**: K8s NetworkPolicies work with IP CIDRs, not domain names. Use a network proxy or service mesh for domain-based filtering.
-- **IPv6**: Currently only IPv4 CIDRs are supported in egress rules.
-- **CNI dependency**: Enforcement requires a NetworkPolicy-capable CNI plugin.
+- **Denylist port filtering**: K8s NetworkPolicies cannot
+  deny specific ports while allowing others. Use allowlist
+  mode for port-level control.
+- **Domain-based rules**: K8s NetworkPolicies work with
+  IP CIDRs, not domain names. Use a network proxy or
+  service mesh for domain-based filtering.
+- **IPv6**: Currently only IPv4 CIDRs are supported in
+  egress rules.
+- **CNI dependency**: Enforcement requires a
+  NetworkPolicy-capable CNI plugin.
