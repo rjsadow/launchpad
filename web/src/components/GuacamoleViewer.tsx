@@ -104,6 +104,12 @@ export function GuacamoleViewer({
     const connectGuacamole = async () => {
       if (unmountedRef.current || !containerRef.current) return;
 
+      // Measure container to pass actual viewport dimensions to the RDP session
+      const containerWidth = containerRef.current.clientWidth;
+      const containerHeight = containerRef.current.clientHeight;
+      const sep = fullWsUrl.includes('?') ? '&' : '?';
+      const tunnelUrl = `${fullWsUrl}${sep}width=${containerWidth}&height=${containerHeight}`;
+
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const Guacamole = (await import('guacamole-common-js')).default as any;
@@ -114,13 +120,13 @@ export function GuacamoleViewer({
           containerRef.current.innerHTML = '';
         }
 
-        const tunnel = new Guacamole.WebSocketTunnel(fullWsUrl);
+        const tunnel = new Guacamole.WebSocketTunnel(tunnelUrl);
         const client = new Guacamole.Client(tunnel);
         clientRef.current = client;
 
+        // Let Guacamole manage the display element dimensions via display.scale()
+        // Do NOT override with CSS width/height as it causes mouse coordinate misalignment
         const displayElement = client.getDisplay().getElement();
-        displayElement.style.width = '100%';
-        displayElement.style.height = '100%';
         containerRef.current.appendChild(displayElement);
 
         // State changes
