@@ -29,6 +29,7 @@ func TestBuildSessionNetworkPolicy_InvalidMode(t *testing.T) {
 }
 
 func TestBuildSessionNetworkPolicy_Allowlist(t *testing.T) {
+	defer ResetClient()
 	policy := &db.EgressPolicy{
 		Mode: "allowlist",
 		Rules: []db.EgressRule{
@@ -84,6 +85,7 @@ func TestBuildSessionNetworkPolicy_Allowlist(t *testing.T) {
 }
 
 func TestBuildSessionNetworkPolicy_Denylist(t *testing.T) {
+	defer ResetClient()
 	policy := &db.EgressPolicy{
 		Mode: "denylist",
 		Rules: []db.EgressRule{
@@ -116,6 +118,7 @@ func TestBuildSessionNetworkPolicy_Denylist(t *testing.T) {
 }
 
 func TestBuildSessionNetworkPolicy_DenylistEmpty(t *testing.T) {
+	defer ResetClient()
 	policy := &db.EgressPolicy{
 		Mode:  "denylist",
 		Rules: []db.EgressRule{},
@@ -141,6 +144,7 @@ func TestBuildSessionNetworkPolicy_DenylistEmpty(t *testing.T) {
 }
 
 func TestBuildSessionNetworkPolicy_Labels(t *testing.T) {
+	defer ResetClient()
 	policy := &db.EgressPolicy{Mode: "allowlist"}
 	np := BuildSessionNetworkPolicy("sess-4", "app-4", policy)
 	if np == nil {
