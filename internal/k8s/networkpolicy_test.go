@@ -22,6 +22,7 @@ func TestBuildSessionNetworkPolicy_EmptyMode(t *testing.T) {
 }
 
 func TestBuildSessionNetworkPolicy_InvalidMode(t *testing.T) {
+	defer ResetClient()
 	np := BuildSessionNetworkPolicy("sess-1", "app-1", &db.EgressPolicy{Mode: "invalid"})
 	if np != nil {
 		t.Error("expected nil NetworkPolicy for invalid mode")
@@ -29,6 +30,7 @@ func TestBuildSessionNetworkPolicy_InvalidMode(t *testing.T) {
 }
 
 func TestBuildSessionNetworkPolicy_Allowlist(t *testing.T) {
+	defer ResetClient()
 	policy := &db.EgressPolicy{
 		Mode: "allowlist",
 		Rules: []db.EgressRule{
@@ -84,6 +86,7 @@ func TestBuildSessionNetworkPolicy_Allowlist(t *testing.T) {
 }
 
 func TestBuildSessionNetworkPolicy_Denylist(t *testing.T) {
+	defer ResetClient()
 	policy := &db.EgressPolicy{
 		Mode: "denylist",
 		Rules: []db.EgressRule{
@@ -116,6 +119,7 @@ func TestBuildSessionNetworkPolicy_Denylist(t *testing.T) {
 }
 
 func TestBuildSessionNetworkPolicy_DenylistEmpty(t *testing.T) {
+	defer ResetClient()
 	policy := &db.EgressPolicy{
 		Mode:  "denylist",
 		Rules: []db.EgressRule{},
@@ -141,6 +145,7 @@ func TestBuildSessionNetworkPolicy_DenylistEmpty(t *testing.T) {
 }
 
 func TestBuildSessionNetworkPolicy_Labels(t *testing.T) {
+	defer ResetClient()
 	policy := &db.EgressPolicy{Mode: "allowlist"}
 	np := BuildSessionNetworkPolicy("sess-4", "app-4", policy)
 	if np == nil {
