@@ -13,6 +13,8 @@ import (
 	. "github.com/onsi/gomega"
 )
 
+// --- HTTP helpers ---
+
 func jsonReader(s string) io.Reader {
 	return strings.NewReader(s)
 }
@@ -55,78 +57,126 @@ func authDelete(url, token string) *http.Response {
 	return resp
 }
 
-func waitForSessionRunning(sessionID string, timeout time.Duration) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		resp := authGet(baseURL+"/api/sessions/"+sessionID, adminToken)
-		var session map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&session)
-		resp.Body.Close()
-
-		status, _ := session["status"].(string)
-		if status == "running" {
-			return
-		}
-		if status == "failed" {
-			Fail(fmt.Sprintf("session %s failed", sessionID))
-		}
-		time.Sleep(2 * time.Second)
-	}
-	Fail(fmt.Sprintf("timeout waiting for session %s to reach running", sessionID))
+func unauthGet(url string) *http.Response {
+	resp, err := http.Get(url)
+	Expect(err).NotTo(HaveOccurred())
+	return resp
 }
 
-// waitForSessionStatus polls until the session reaches the target status.
-// Returns nil on success, error on timeout.
-func waitForSessionStatus(sessionID, target string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		req, _ := http.NewRequest(http.MethodGet, baseURL+"/api/sessions/"+sessionID, nil)
-		req.Header.Set("Authorization", "Bearer "+adminToken)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		var session map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&session)
-		resp.Body.Close()
-
-		status, _ := session["status"].(string)
-		if status == target {
-			return nil
-		}
-		if status == "failed" && target != "failed" {
-			return fmt.Errorf("session %s failed", sessionID)
-		}
-		time.Sleep(2 * time.Second)
-	}
-	return fmt.Errorf("timeout waiting for session %s to reach %s", sessionID, target)
+func unauthPost(url string, body []byte) *http.Response {
+	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	Expect(err).NotTo(HaveOccurred())
+	return resp
 }
 
-// waitForPodDeletion waits for the session's Kubernetes pod to be fully
-// terminated. The stop endpoint triggers pod deletion, but Kubernetes needs
-// time to finalize it. Without this wait, restart fails with "pod already
-// exists" because the old pod is still terminating.
-func waitForPodDeletion(sessionID string, timeout time.Duration) {
-	podName := "launchpad-session-" + sessionID
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		time.Sleep(2 * time.Second)
+// --- JSON decode helpers ---
 
-		resp := authGet(baseURL+"/api/sessions/"+sessionID, adminToken)
-		var session map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&session)
-		resp.Body.Close()
+func decodeJSON(resp *http.Response) map[string]any {
+	var result map[string]any
+	err := json.NewDecoder(resp.Body).Decode(&result)
+	Expect(err).NotTo(HaveOccurred())
+	return result
+}
 
-		status, _ := session["status"].(string)
-		if status == "stopped" {
-			// Give Kubernetes a bit more time for pod finalizers
-			time.Sleep(3 * time.Second)
-			return
+func decodeJSONArray(resp *http.Response) []any {
+	var result []any
+	err := json.NewDecoder(resp.Body).Decode(&result)
+	Expect(err).NotTo(HaveOccurred())
+	return result
+}
+
+// --- Auth helpers ---
+
+func login(base, username, password string) (string, error) {
+	body := fmt.Sprintf(`{"username":%q,"password":%q}`, username, password)
+	resp, err := http.Post(base+"/api/auth/login", "application/json", jsonReader(body))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("login returned %d", resp.StatusCode)
+	}
+
+	var result struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+	return result.AccessToken, nil
+}
+
+func loginFull(base, username, password string) (accessToken, refreshToken string, err error) {
+	body := fmt.Sprintf(`{"username":%q,"password":%q}`, username, password)
+	resp, err := http.Post(base+"/api/auth/login", "application/json", jsonReader(body))
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("login returned %d", resp.StatusCode)
+	}
+
+	var result struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", "", err
+	}
+	return result.AccessToken, result.RefreshToken, nil
+}
+
+// createTestUser creates a user via the admin API and returns its ID.
+func createTestUser(username, password, email string, roles []string) string {
+	rolesJSON, _ := json.Marshal(roles)
+	body := []byte(fmt.Sprintf(`{
+		"username": %q,
+		"password": %q,
+		"email": %q,
+		"roles": %s
+	}`, username, password, email, string(rolesJSON)))
+
+	resp := authPost(baseURL+"/api/admin/users", adminToken, body)
+	defer resp.Body.Close()
+
+	// 201 = created, 409 = already exists (from a previous test run)
+	Expect(resp.StatusCode).To(SatisfyAny(
+		Equal(http.StatusCreated),
+		Equal(http.StatusConflict),
+	), "failed to create user %s", username)
+
+	if resp.StatusCode == http.StatusCreated {
+		result := decodeJSON(resp)
+		return result["id"].(string)
+	}
+
+	// If conflict, find the user's ID from the list
+	listResp := authGet(baseURL+"/api/admin/users", adminToken)
+	defer listResp.Body.Close()
+	users := decodeJSONArray(listResp)
+	for _, u := range users {
+		user := u.(map[string]any)
+		if user["username"] == username {
+			return user["id"].(string)
 		}
 	}
-	GinkgoWriter.Printf("warning: pod %s may not be fully deleted after %v\n", podName, timeout)
+	return ""
 }
+
+// deleteTestUser deletes a user by ID via the admin API.
+func deleteTestUser(userID string) {
+	if userID == "" {
+		return
+	}
+	resp := authDelete(baseURL+"/api/admin/users/"+userID, adminToken)
+	resp.Body.Close()
+}
+
+// --- App helpers ---
 
 func createE2EApp(id, launchType string) {
 	body := []byte(fmt.Sprintf(`{
@@ -150,23 +200,70 @@ func deleteE2EApp(id string) {
 	resp.Body.Close()
 }
 
-func login(base, username, password string) (string, error) {
-	body := fmt.Sprintf(`{"username":%q,"password":%q}`, username, password)
-	resp, err := http.Post(base+"/api/auth/login", "application/json", jsonReader(body))
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
+// --- Session wait helpers ---
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("login returned %d", resp.StatusCode)
-	}
+func waitForSessionRunning(sessionID string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		resp := authGet(baseURL+"/api/sessions/"+sessionID, adminToken)
+		var session map[string]any
+		json.NewDecoder(resp.Body).Decode(&session)
+		resp.Body.Close()
 
-	var result struct {
-		AccessToken string `json:"access_token"`
+		status, _ := session["status"].(string)
+		if status == "running" {
+			return
+		}
+		if status == "failed" {
+			Fail(fmt.Sprintf("session %s failed", sessionID))
+		}
+		time.Sleep(2 * time.Second)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
+	Fail(fmt.Sprintf("timeout waiting for session %s to reach running", sessionID))
+}
+
+func waitForSessionStatus(sessionID, target string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		req, _ := http.NewRequest(http.MethodGet, baseURL+"/api/sessions/"+sessionID, nil)
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		var session map[string]any
+		json.NewDecoder(resp.Body).Decode(&session)
+		resp.Body.Close()
+
+		status, _ := session["status"].(string)
+		if status == target {
+			return nil
+		}
+		if status == "failed" && target != "failed" {
+			return fmt.Errorf("session %s failed", sessionID)
+		}
+		time.Sleep(2 * time.Second)
 	}
-	return result.AccessToken, nil
+	return fmt.Errorf("timeout waiting for session %s to reach %s", sessionID, target)
+}
+
+func waitForPodDeletion(sessionID string, timeout time.Duration) {
+	podName := "launchpad-session-" + sessionID
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		time.Sleep(2 * time.Second)
+
+		resp := authGet(baseURL+"/api/sessions/"+sessionID, adminToken)
+		var session map[string]any
+		json.NewDecoder(resp.Body).Decode(&session)
+		resp.Body.Close()
+
+		status, _ := session["status"].(string)
+		if status == "stopped" {
+			time.Sleep(3 * time.Second)
+			return
+		}
+	}
+	GinkgoWriter.Printf("warning: pod %s may not be fully deleted after %v\n", podName, timeout)
 }
